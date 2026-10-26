@@ -1,0 +1,9 @@
+# Backend – Python 3.10 trở lên
+# Sau khi cài xong và chạy ổn, chốt phiên bản cho báo cáo:
+#   pip freeze > backend/requirements.lock.txt
+fastapi>=0.115
+uvicorn[standard]>=0.30
+
+# Kiểm thử
+pytest>=8
+httpx>=0.27

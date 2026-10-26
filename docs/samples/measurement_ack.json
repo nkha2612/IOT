@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "duplicate": false,
+  "config": {
+    "version": 1,
+    "temp_high": 30.0,
+    "temp_recover": 29.0,
+    "hum_high": 75.0,
+    "hum_recover": 72.0,
+    "lux_low": 300.0,
+    "lux_recover": 350.0,
+    "light_alert_enabled": false,
+    "confirm_samples": 3
+  }
+}

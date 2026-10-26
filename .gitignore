@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Dữ liệu chạy thật: không đẩy database lên repo (sao lưu riêng vào data/backup khi cần)
+*.db
+*.db-wal
+*.db-shm
+data/*.csv
+!data/.gitkeep
+
+# Firmware: thông tin Wi-Fi riêng của từng người
+firmware/**/secrets.h
+firmware/**/build/
+.pio/
+
+# Hệ điều hành / IDE
+.DS_Store
+.vscode/
+.idea/

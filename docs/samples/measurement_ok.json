@@ -1,0 +1,11 @@
+{
+  "device_id": "esp32-room-01",
+  "boot_id": "7f3a91c2",
+  "seq": 152,
+  "uptime_ms": 760345,
+  "temperature": 28.4,
+  "humidity": 65.2,
+  "lux": 412.5,
+  "sensor_status": { "dht22": "ok", "bh1750": "ok" },
+  "config_version_applied": 1
+}
