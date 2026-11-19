@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kiểm tra backend</title>
+<!-- TRANG TẠM do TV2 viết để thử API trên điện thoại (Ngày 6–7).
+     TV3 thay toàn bộ thư mục frontend/ bằng giao diện chính thức. -->
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1d2330; --muted:#677087; --ok:#1f8a4c; --bad:#c0392b; --line:#e3e6ec; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14171d; --card:#1d222b; --ink:#e8ebf1; --muted:#9aa3b5; --line:#2c333f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--ink); }
+  h1 { font-size:18px; margin:0 0 4px; }
+  .muted { color:var(--muted); font-size:13px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin:16px 0; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  .val { font-size:24px; white-space:nowrap; font-weight:600; margin:6px 0 2px; font-variant-numeric:tabular-nums; }
+  .flag { font-size:12px; color:var(--muted); }
+  .flag.bad { color:var(--bad); }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--muted); margin-right:6px; }
+  .dot.on { background:var(--ok); } .dot.off { background:var(--bad); }
+  pre { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; overflow:auto; font-size:12px; }
+</style>
+</head>
+<body>
+  <h1>Kiểm tra backend – trang tạm</h1>
+  <div class="muted">Tự cập nhật mỗi 3 giây từ <code>/api/latest</code>. Thời gian hiển thị theo giờ Việt Nam, dùng thời điểm server nhận.</div>
+
+  <div class="card" style="margin-top:16px">
+    <span id="dot" class="dot"></span><strong id="status">Đang kết nối…</strong>
+    <div class="muted" id="seen"></div>
+  </div>
+
+  <div class="grid">
+    <div class="card"><div class="muted">Nhiệt độ</div><div class="val" id="t">—</div><div class="flag" id="tf"></div></div>
+    <div class="card"><div class="muted">Độ ẩm</div><div class="val" id="h">—</div><div class="flag" id="hf"></div></div>
+    <div class="card"><div class="muted">Độ rọi</div><div class="val" id="l">—</div><div class="flag" id="lf"></div></div>
+  </div>
+
+  <details><summary class="muted">Dữ liệu JSON gốc</summary><pre id="raw"></pre></details>
+
+<script>
+const fmtTime = iso => iso ? new Date(iso).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "—";
+const show = (id, v, unit, flag) => {
+  document.getElementById(id).textContent = v === null || v === undefined ? "—" : `${v} ${unit}`;
+  const f = document.getElementById(id + "f");
+  f.textContent = flag ? `cờ: ${flag}` : "";
+  f.className = "flag" + (flag && flag !== "ok" ? " bad" : "");
+};
+
+async function refresh() {
+  const dot = document.getElementById("dot"), status = document.getElementById("status");
+  try {
+    const res = await fetch("/api/latest", { cache: "no-store" });
+    const data = await res.json();
+    document.getElementById("raw").textContent = JSON.stringify(data, null, 2);
+    const d = data.device, m = data.measurement;
+    if (!d) { status.textContent = "Chưa có thiết bị nào gửi dữ liệu"; dot.className = "dot"; return; }
+    dot.className = "dot " + (d.online ? "on" : "off");
+    status.textContent = `${d.device_id}: ${d.online ? "online" : "OFFLINE"}`;
+    document.getElementById("seen").textContent =
+      `Nhận lần cuối ${fmtTime(d.last_seen_at)} (${d.seconds_since_last} s trước) · cấu hình v${data.config.version}, thiết bị đang dùng v${data.config.applied_version ?? "?"}`;
+    if (m) {
+      show("t", m.temperature, "°C", m.flags.temperature);
+      show("h", m.humidity, "%RH", m.flags.humidity);
+      show("l", m.lux, "lux", m.flags.lux);
+    }
+  } catch (e) {
+    dot.className = "dot off";
+    status.textContent = "Mất kết nối máy chủ – đang giữ số liệu cũ";
+  }
+}
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>
