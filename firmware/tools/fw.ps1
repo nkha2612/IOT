@@ -73,14 +73,45 @@ switch ($Action) {
       if (-not $gpp) { throw 'Khong thay g++ (winget install BrechtSanders.WinLibs.POSIX.UCRT).' }
       $env:PATH = "$(Split-Path $gpp.FullName);$env:PATH"   # g++ cần thư mục bin của nó trong PATH
     }
-    $exe = Join-Path $env:TEMP 'tv1_test_alerts.exe'
+    # ArduinoJson chỉ là thư viện header, dùng chung bản Arduino IDE đã cài cho kiểm thử JSON.
+    $ajson = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Arduino\libraries\ArduinoJson\src'
+    $suites = @(
+      @{ name = 'canh bao'; src = @('test_alerts.cpp', '../tv1_firmware/alerts.cpp'); inc = @() },
+      @{ name = 'BH1750';   src = @('test_light.cpp', '../tv1_firmware/light.cpp', '../tv1_firmware/alerts.cpp'); inc = @() },
+      @{ name = 'JSON API'; src = @('test_payload.cpp', '../tv1_firmware/payload.cpp', '../tv1_firmware/alerts.cpp'); inc = @("-I$ajson") }
+    )
+    $failed = @()
     Push-Location (Join-Path $fw 'test_host')
     try {
-      g++ -std=c++17 -Wall -Wextra -I../tv1_firmware test_alerts.cpp ../tv1_firmware/alerts.cpp -o $exe
-      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      & $exe
-      exit $LASTEXITCODE
+      foreach ($s in $suites) {
+        Write-Host "===== Kiem thu $($s.name) ====="
+        $exe = Join-Path $env:TEMP ("tv1_test_" + ($s.src[0] -replace '\.cpp$', '') + '.exe')
+        g++ -std=c++17 -Wall -Wextra -I../tv1_firmware @($s.inc) @($s.src) -o $exe
+        if ($LASTEXITCODE -ne 0) { $failed += "$($s.name) (bien dich)"; continue }
+        & $exe
+        if ($LASTEXITCODE -ne 0) { $failed += $s.name }
+      }
     } finally { Pop-Location }
+
+    # Gói JSON firmware tạo ra -> backend thật của nhóm (backend/app). Cần Python + FastAPI.
+    $backend = Join-Path (Split-Path -Parent $fw) 'backend\app\main.py'
+    $payloadExe = Join-Path $env:TEMP 'tv1_test_test_payload.exe'
+    python -c "import fastapi" 2>$null
+    if ((Test-Path $backend) -and (Test-Path $payloadExe) -and $LASTEXITCODE -eq 0) {
+      Write-Host '===== Kiem goi JSON bang backend cua nhom ====='
+      $dumpDir = Join-Path $env:TEMP 'tv1_payloads'
+      Remove-Item $dumpDir -Recurse -Force -ErrorAction SilentlyContinue
+      New-Item -ItemType Directory $dumpDir | Out-Null
+      & $payloadExe --dump $dumpDir | Out-Null
+      $env:PYTHONWARNINGS = 'ignore'
+      python (Join-Path $PSScriptRoot 'check_payloads.py') $dumpDir
+      if ($LASTEXITCODE -ne 0) { $failed += 'JSON qua backend' }
+    } else {
+      Write-Host '(Bo qua kiem goi JSON bang backend: can repo co backend/ va pip install -r backend/requirements.txt)'
+    }
+    if ($failed.Count) { Write-Host "KHONG DAT: $($failed -join ', ')"; exit 1 }
+    Write-Host 'TAT CA KIEM THU DAT'
+    exit 0
   }
   'ports' {
     & (Get-Cli) board list

@@ -16,6 +16,7 @@ constexpr uint32_t SAMPLE_PERIOD_MS       = 5000;  // CN01: mỗi 5 giây một 
 constexpr uint32_t FIRST_SAMPLE_DELAY_MS  = 2000;  // DHT22 cần khoảng 2 giây sau khi cấp nguồn
 
 // ---------- Định danh thiết bị (báo cho TV2) ----------
+// Khác "esp32-room-01" của tools/fake_device.py để thiết bị thật và giả lập không lẫn dữ liệu.
 #define DEVICE_ID "esp32-phong01"
 
 // ---------- Mạng ----------
@@ -24,5 +25,5 @@ constexpr uint32_t WIFI_BACKOFF_MIN_MS      = 2000;  // khoảng chờ trước 
 constexpr uint32_t WIFI_BACKOFF_MAX_MS      = 60000; // khoảng chờ tối đa (nhân đôi sau mỗi lần hỏng)
 constexpr uint32_t HTTP_CONNECT_TIMEOUT_MS  = 4000;  // chờ mở kết nối TCP tới laptop; >2 s để kịp gửi lại SYN khi
                                                      // mất gói (Wi-Fi nhà trọ đo được trễ 80–160 ms, mất ~2,5 % gói)
-constexpr uint16_t HTTP_RESPONSE_TIMEOUT_MS = 3000;  // chờ phản hồi HTTP
-constexpr uint32_t PROBE_PERIOD_MS          = 5000;  // tuần 1: chu kỳ thăm dò server tạm
+constexpr uint16_t HTTP_RESPONSE_TIMEOUT_MS = 3000;  // chờ phản hồi HTTP (docs/api.md: backend trả lời < 3 s)
+// Gửi chạy ở tác vụ mạng riêng nên thời gian chờ không làm trễ nhịp đo; lỗi mạng thì gửi lại 1 lần.

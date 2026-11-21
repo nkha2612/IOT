@@ -2,12 +2,7 @@
 // Lỗi đọc trả về NAN kèm trạng thái lỗi, KHÔNG thay bằng 0 (mục 4 tài liệu dự án).
 #pragma once
 #include <Arduino.h>
-
-enum class SensorStatus : uint8_t {
-  OK = 0,          // đọc được
-  READ_ERROR = 1,  // có cảm biến nhưng lần đọc này lỗi
-  NOT_FOUND = 2,   // không tìm thấy cảm biến trên bus I2C (chỉ BH1750)
-};
+#include "sensor_status.h"
 
 struct Reading {
   float temperature;   // °C, NAN nếu lỗi
@@ -18,6 +13,8 @@ struct Reading {
 };
 
 void sensorsBegin();
+void sensorsService(uint32_t now);  // gọi liên tục trong loop(): tìm lại BH1750 nếu chưa thấy / vừa mất
 Reading sensorsRead();
-uint8_t bh1750Address();  // 0x23 hoặc 0x5C; 0 nếu chưa tìm thấy
+uint8_t bh1750Address();            // 0x23 hoặc 0x5C; 0 nếu chưa tìm thấy
+void sensorsPrintLightStatus();     // chẩn đoán BH1750 cho lệnh show
 const char* sensorStatusName(SensorStatus s);

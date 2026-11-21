@@ -9,5 +9,5 @@
 void netBegin();                        // tạo hàng đợi và tác vụ mạng; gọi sau WiFi.persistent(false) và WiFi.mode(WIFI_STA)
 void netSubmit(const Sample& s);        // đưa mẫu mới nhất cho tác vụ mạng, không chặn
 LinkState netLinkState();               // trạng thái đường truyền cho LED xanh
-bool netPollConfig(AlertConfig& out);   // cấu hình mới từ backend (chưa dùng ở tuần 1)
+bool netPollConfig(AlertConfig& out);   // cấu hình backend gửi kèm phản hồi POST gần nhất
 void netPrintStatus();                  // in trạng thái mạng ra Serial

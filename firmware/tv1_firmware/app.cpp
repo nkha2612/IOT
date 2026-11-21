@@ -10,6 +10,7 @@
 #include "indicators.h"
 #include "net.h"
 #include "console.h"
+#include "payload.h"
 
 namespace {
 AlertConfig cfg;
@@ -24,6 +25,24 @@ Sample lastSample{};
 bool haveSample = false;
 bool sensorProblem = false;
 bool muted = false;
+
+// Ngưỡng chỉnh bằng lệnh "set": giữ nguyên, bỏ qua cấu hình backend gửi về trong phản hồi POST
+// cho tới khi gõ "reset" hoặc khởi động lại. Không có cờ này thì chỉ 5 s sau backend đã ghi đè,
+// không thử được "set light 1" / "set t_on 25" khi đang nối backend.
+bool localOverride = false;
+uint32_t ignoredBackendVersion = 0;  // chỉ in thông báo bỏ qua một lần cho mỗi phiên bản
+
+const char* bootIdHex() {
+  static char buf[9];
+  formatBootId(bootId, buf);
+  return buf;
+}
+
+// Giả lập độ rọi bằng lệnh "sim lux ..." để thử cảnh báo ánh sáng khi chưa lắp BH1750.
+// Chỉ nằm trong RAM: khởi động lại là về đọc cảm biến thật.
+enum class SimLux : uint8_t { OFF, VALUE, READ_ERROR, NOT_FOUND };
+SimLux simLux = SimLux::OFF;
+float simLuxValue = 0;
 
 const char* fmt(float v, char* buf, size_t n, int decimals) {
   if (isnan(v)) {
@@ -84,9 +103,16 @@ void describe(const AlertChannel& ch, char* out, size_t n) {
 }
 
 void takeSample(uint32_t now) {
-  const Reading r = sensorsRead();
+  Reading r = sensorsRead();
+  switch (simLux) {
+    case SimLux::OFF:        break;
+    case SimLux::VALUE:      r.lux = simLuxValue; r.light = SensorStatus::OK; break;
+    case SimLux::READ_ERROR: r.lux = NAN; r.light = SensorStatus::READ_ERROR; break;
+    case SimLux::NOT_FOUND:  r.lux = NAN; r.light = SensorStatus::NOT_FOUND; break;
+  }
 
   Sample s{};
+  s.bootId = bootId;
   s.seq = ++seq;
   s.uptimeMs = now;
   s.temperature = r.temperature;  // giữ nguyên giá trị gốc, kể cả khi ngoài miền đo
@@ -116,12 +142,27 @@ void takeSample(uint32_t now) {
   describe(chTemp, dt, sizeof dt);
   describe(chHum, dh, sizeof dh);
   describe(chLight, dl, sizeof dl);
-  Serial.printf("[DO] #%lu up=%lus | T=%s C H=%s %% L=%s lx | DHT22=%s BH1750=%s | T:%s H:%s L:%s | mang:%s\n",
+  Serial.printf("[DO] #%lu up=%lus | T=%s C H=%s %% L=%s lx%s | DHT22=%s BH1750=%s | T:%s H:%s L:%s | mang:%s\n",
                 (unsigned long)s.seq, (unsigned long)(now / 1000), fmt(r.temperature, t, sizeof t, 1),
-                fmt(r.humidity, h, sizeof h, 1), fmt(r.lux, l, sizeof l, 1), sensorStatusName(r.dht),
-                sensorStatusName(r.light), dt, dh, dl, linkStateName(netLinkState()));
+                fmt(r.humidity, h, sizeof h, 1), fmt(r.lux, l, sizeof l, 1),
+                simLux == SimLux::OFF ? "" : "(GIA LAP)", sensorStatusName(r.dht), sensorStatusName(r.light),
+                dt, dh, dl, linkStateName(netLinkState()));
 
-  netSubmit(s);  // tác vụ mạng nhận mẫu; tuần 1 chưa gửi đi
+  netSubmit(s);  // tác vụ mạng gửi POST /api/measurements, không chặn nhịp đo
+}
+
+// Cấu hình backend gửi kèm phản hồi POST (mỗi 5 s). Chỉ áp dụng và ghi flash khi khác bản đang dùng.
+void handleBackendConfig(const AlertConfig& c) {
+  if (sameAlertConfig(c, cfg)) return;
+  if (localOverride) {
+    if (c.version != ignoredBackendVersion) {
+      ignoredBackendVersion = c.version;
+      Serial.printf("[CAU HINH] Dang dung nguong chinh tai cho, bo qua cau hinh backend v%lu (go reset de nhan)\n",
+                    (unsigned long)c.version);
+    }
+    return;
+  }
+  applyConfig(c, "backend");
 }
 
 IndicatorInputs indicatorInputs() {
@@ -136,9 +177,10 @@ IndicatorInputs indicatorInputs() {
 
 // ---------- Lệnh Serial ----------
 void cmdShow() {
-  Serial.printf("device_id=%s boot_id=%lu uptime=%lus seq=%lu\n", DEVICE_ID, (unsigned long)bootId,
+  Serial.printf("device_id=%s boot_id=%s uptime=%lus seq=%lu\n", DEVICE_ID, bootIdHex(),
                 (unsigned long)(millis() / 1000), (unsigned long)seq);
   printConfig();
+  if (localOverride) Serial.println(F("  (nguong chinh tai cho: dang bo qua cau hinh backend, go reset de nhan)"));
   char dt[32], dh[32], dl[32];
   describe(chTemp, dt, sizeof dt);
   describe(chHum, dh, sizeof dh);
@@ -151,6 +193,14 @@ void cmdShow() {
                   fmt(lastSample.humidity, h, sizeof h, 1), fmt(lastSample.lux, l, sizeof l, 1),
                   sensorStatusName(lastSample.dht), sensorStatusName(lastSample.light),
                   (unsigned long)lastSample.configVersion, (unsigned)lastSample.alertFlags);
+  }
+  sensorsPrintLightStatus();
+  if (simLux != SimLux::OFF) {
+    char v[16];
+    Serial.printf("  CHU Y: dang GIA LAP do roi: %s (go \"sim off\" de ve cam bien that)\n",
+                  simLux == SimLux::VALUE        ? fmt(simLuxValue, v, sizeof v, 1)
+                  : simLux == SimLux::READ_ERROR ? "loi doc"
+                                                 : "khong thay cam bien");
   }
   netPrintStatus();
   Serial.printf("  Coi: %s\n", muted ? "TAT TIENG (lenh mute)" : "binh thuong");
@@ -173,15 +223,46 @@ const char* cmdSet(const char* key, float v) {
   c.version = 0;  // chỉnh tại chỗ: chưa phải phiên bản do backend cấp
   const char* err = validateAlertConfig(c);
   if (err) return err;
+  if (!localOverride) Serial.println(F("[CAU HINH] Giu nguong chinh tai cho, bo qua cau hinh backend toi khi go reset"));
+  localOverride = true;
   applyConfig(c, "lenh Serial");
   return nullptr;
 }
 
-void cmdReset() { applyConfig(defaultAlertConfig(), "lenh reset"); }
+// Về ngưỡng mặc định và lại nhận cấu hình từ backend (mẫu gửi kế tiếp sẽ mang về bản mới nhất).
+void cmdReset() {
+  localOverride = false;
+  ignoredBackendVersion = 0;
+  applyConfig(defaultAlertConfig(), "lenh reset");
+}
 
 bool cmdMute() {
   muted = !muted;
   return muted;
+}
+
+// arg: nullptr = tắt giả lập; "loi" = lỗi đọc; "mat" = không thấy cảm biến; số = độ rọi (lux).
+const char* cmdSimLux(const char* arg) {
+  if (!arg) {
+    simLux = SimLux::OFF;
+    Serial.println(F("[GIA LAP] Tat, ve doc BH1750 that"));
+    return nullptr;
+  }
+  if (!strcmp(arg, "loi")) {
+    simLux = SimLux::READ_ERROR;
+  } else if (!strcmp(arg, "mat")) {
+    simLux = SimLux::NOT_FOUND;
+  } else {
+    char* end = nullptr;
+    const float v = strtof(arg, &end);
+    if (end == arg || *end != '\0') return "can so lux, \"loi\" hoac \"mat\"";
+    if (!luxInRange(v) || v > 65535.0f) return "lux phai trong 0..65535";
+    simLux = SimLux::VALUE;
+    simLuxValue = v;
+  }
+  Serial.println(F("[GIA LAP] Do roi tu mau sau se la gia tri gia lap (khoi dong lai thi het)"));
+  if (!cfg.lightEnabled) Serial.println(F("  Luu y: canh bao anh sang dang TAT, go \"set light 1\" de xet canh bao"));
+  return nullptr;
 }
 }  // namespace
 
@@ -196,7 +277,7 @@ void appSetup() {
   WiFi.mode(WIFI_STA);     // bật RF trước để esp_random() cho số ngẫu nhiên thật
   bootId = esp_random();
   if (bootId == 0) bootId = 1;
-  Serial.printf("device_id=%s boot_id=%lu\n", DEVICE_ID, (unsigned long)bootId);
+  Serial.printf("device_id=%s boot_id=%s\n", DEVICE_ID, bootIdHex());
 
   const bool loaded = loadAlertConfig(cfg);
   Serial.println(loaded ? F("Da doc cau hinh nguong luu trong ESP32")
@@ -207,12 +288,12 @@ void appSetup() {
   if (bh1750Address()) {
     Serial.printf("Thay BH1750 o dia chi I2C 0x%02X\n", (unsigned)bh1750Address());
   } else {
-    Serial.println(F("CHU Y: khong thay BH1750 (SDA=GPIO21, SCL=GPIO22, VCC=3V3)"));
+    Serial.println(F("CHU Y: khong thay BH1750 (SDA=GPIO21, SCL=GPIO22, VCC=3V3); se tu tim lai moi giay"));
   }
 
   indicatorsLedTest();
   netBegin();
-  consoleBegin({cmdShow, cmdSet, cmdReset, cmdMute});
+  consoleBegin({cmdShow, cmdSet, cmdReset, cmdMute, cmdSimLux});
   Serial.println(F("Go help de xem lenh."));
   nextSampleAt = millis() + FIRST_SAMPLE_DELAY_MS;
 }
@@ -221,7 +302,7 @@ void appLoop() {
   const uint32_t now = millis();
 
   AlertConfig incoming;
-  if (netPollConfig(incoming)) applyConfig(incoming, "backend");
+  if (netPollConfig(incoming)) handleBackendConfig(incoming);
 
   if ((int32_t)(now - nextSampleAt) >= 0) {
     nextSampleAt += SAMPLE_PERIOD_MS;  // giữ nhịp cố định, không trôi theo thời gian xử lý
@@ -229,6 +310,7 @@ void appLoop() {
     takeSample(now);
   }
 
+  sensorsService(millis());  // tìm lại BH1750 giữa hai nhịp đo, để mẫu kế tiếp có số
   indicatorsUpdate(indicatorInputs(), millis());
   consolePoll();
   delay(5);  // nhường CPU cho tác vụ khác; LED và còi vẫn chính xác tới khoảng 5 ms

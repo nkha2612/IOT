@@ -1,8 +1,10 @@
-// net.cpp – Tác vụ mạng (lõi 0): giữ Wi-Fi, tự kết nối lại có khoảng chờ tăng dần,
-// tuần 1 thăm dò server tạm để kiểm tra đường ESP32 -> laptop.
-// Phần gửi dữ liệu và nhận cấu hình CHỜ TV2 chốt JSON/API: xem TODO(phoi hop TV2) bên dưới.
+// net.cpp – Tác vụ mạng (lõi 0): giữ Wi-Fi (tự nối lại, khoảng chờ tăng dần) và gửi mỗi mẫu bằng
+// POST /api/measurements theo docs/api.md (API v1). Kết quả POST quyết định LED xanh; cấu hình
+// trong phản hồi được chuyển cho loop() qua hàng đợi để áp dụng và lưu.
+// Bản cơ bản KHÔNG lưu bù: mất mạng thì bỏ mẫu, chỉ gửi mẫu mới nhất.
 #include "net.h"
 #include "config.h"
+#include "payload.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
 
@@ -13,26 +15,116 @@
 #endif
 
 namespace {
-QueueHandle_t sampleQueue = nullptr;  // dài 1: chỉ giữ mẫu mới nhất (bản cơ bản không lưu bù)
+QueueHandle_t sampleQueue = nullptr;  // dài 1: chỉ giữ mẫu mới nhất
 QueueHandle_t configQueue = nullptr;  // dài 1: cấu hình mới từ backend, loop() lấy ra áp dụng
 volatile LinkState currentLink = LinkState::NO_WIFI;
-volatile uint32_t samplesReceived = 0;
 volatile uint32_t wifiConnects = 0;
+
+// Thống kê cho lệnh show. Chỉ tác vụ mạng ghi; đọc lệch một nhịp không ảnh hưởng gì.
+volatile uint32_t statSent = 0;        // gửi thành công (HTTP 200), kể cả gói trùng
+volatile uint32_t statDuplicate = 0;   // backend báo duplicate: true
+volatile uint32_t statRetryOk = 0;     // lần đầu lỗi mạng, gửi lại ngay thì được
+volatile uint32_t statFailed = 0;      // không gửi được (mất kết nối / bị từ chối)
+volatile uint32_t statNoWifi = 0;      // mẫu bị bỏ vì chưa có Wi-Fi
+volatile uint32_t statOverwritten = 0; // mẫu bị mẫu mới hơn đè khi đang bận gửi
+volatile int lastHttpCode = 0;
+volatile uint32_t lastPostMs = 0;      // thời gian một lần gửi (kể cả gửi lại), ms
+
+enum class PostOutcome : uint8_t { OK, NO_CONNECTION, REJECTED };
 
 String serverUrl(const char* path) {
   return String("http://") + SERVER_HOST + ":" + String(SERVER_PORT) + path;
 }
 
-// Thử tới server bằng HTTP GET "/". Có bất kỳ phản hồi HTTP nào (kể cả 404) là đường mạng thông.
-bool probeServer() {
+// Một lần POST. code: mã HTTP (>0) hoặc mã lỗi âm của HTTPClient.
+PostOutcome postOnce(const char* body, size_t len, int& code, String& resp) {
   WiFiClient client;
   HTTPClient http;
   http.setConnectTimeout(HTTP_CONNECT_TIMEOUT_MS);
   http.setTimeout(HTTP_RESPONSE_TIMEOUT_MS);
-  if (!http.begin(client, serverUrl("/"))) return false;
-  const int code = http.GET();
+  // Mở kết nối mới mỗi lần: uvicorn đóng kết nối rảnh sau 5 s, đúng bằng nhịp gửi, giữ kết nối
+  // dễ gửi trúng lúc server vừa đóng.
+  http.setReuse(false);
+  if (!http.begin(client, serverUrl("/api/measurements"))) {
+    code = HTTPC_ERROR_CONNECTION_REFUSED;
+    return PostOutcome::NO_CONNECTION;
+  }
+  http.addHeader("Content-Type", "application/json");
+  code = http.POST(reinterpret_cast<uint8_t*>(const_cast<char*>(body)), len);
+  if (code > 0) resp = http.getString();
   http.end();
-  return code > 0;
+  if (code <= 0) return PostOutcome::NO_CONNECTION;
+  return code == HTTP_CODE_OK ? PostOutcome::OK : PostOutcome::REJECTED;
+}
+
+void setLink(bool ok, int code) {
+  const LinkState next = ok ? LinkState::SERVER_OK : LinkState::WIFI_ONLY;
+  if (next == currentLink) return;
+  currentLink = next;
+  if (ok) {
+    Serial.printf("[SERVER] Gui duoc toi %s (HTTP %d)\n", serverUrl("/api/measurements").c_str(), code);
+  } else {
+    Serial.printf("[SERVER] KHONG gui duoc toi %s: %s\n", serverUrl("/api/measurements").c_str(),
+                  code > 0 ? "backend tu choi goi" : HTTPClient::errorToString(code).c_str());
+  }
+}
+
+// Gửi một mẫu và xử lý phản hồi. Trả về true nếu backend đã nhận.
+bool sendSample(const Sample& s) {
+  static bool warnedConfirm = false;
+  char body[320];
+  const MeasurementPayload p{DEVICE_ID, s.bootId, s.seq,  s.uptimeMs, s.temperature, s.humidity,
+                             s.lux,     s.dht,    s.light, s.configVersion};
+  const size_t len = buildMeasurementJson(p, body, sizeof body);
+  if (len == 0) {
+    Serial.println("[SERVER] LOI: goi do vuot bo dem, khong gui");
+    statFailed = statFailed + 1;
+    return false;
+  }
+
+  const uint32_t t0 = millis();
+  int code = 0;
+  String resp;
+  PostOutcome r = postOnce(body, len, code, resp);
+  // Lỗi mạng lẻ tẻ (Wi-Fi trễ, rơi gói): gửi lại ngay một lần. An toàn vì backend bỏ gói trùng
+  // theo device_id + boot_id + seq. Backend tắt hẳn thì kết nối bị từ chối tức thì, không tốn thời gian.
+  if (r == PostOutcome::NO_CONNECTION && WiFi.status() == WL_CONNECTED) {
+    r = postOnce(body, len, code, resp);
+    if (r == PostOutcome::OK) statRetryOk = statRetryOk + 1;
+  }
+  lastPostMs = millis() - t0;
+  lastHttpCode = code;
+
+  if (r == PostOutcome::REJECTED) {
+    // 422 = gói sai định dạng: lỗi lập trình, in đủ để sửa; KHÔNG gửi lại gói này (docs/api.md).
+    statFailed = statFailed + 1;
+    Serial.printf("[SERVER] Backend tra HTTP %d cho mau #%lu: %.200s\n", code, (unsigned long)s.seq, resp.c_str());
+    Serial.printf("         Goi da gui: %s\n", body);
+    setLink(false, code);
+    return false;
+  }
+  if (r == PostOutcome::NO_CONNECTION) {
+    statFailed = statFailed + 1;
+    setLink(false, code);
+    return false;
+  }
+
+  statSent = statSent + 1;
+  setLink(true, code);
+  MeasurementAck ack{};
+  if (const char* err = parseMeasurementAck(resp.c_str(), resp.length(), ack)) {
+    // Số đo đã được lưu (HTTP 200), chỉ là không đọc được cấu hình kèm theo.
+    Serial.printf("[SERVER] Phan hoi khong doc duoc cau hinh: %s | %.200s\n", err, resp.c_str());
+    return true;
+  }
+  if (ack.duplicate) statDuplicate = statDuplicate + 1;
+  if (ack.confirmSamples != ALERT_CONFIRM_SAMPLES && !warnedConfirm) {
+    warnedConfirm = true;
+    Serial.printf("[CAU HINH] Backend dat confirm_samples=%lu, firmware co dinh %u mau (bo qua)\n",
+                  (unsigned long)ack.confirmSamples, (unsigned)ALERT_CONFIRM_SAMPLES);
+  }
+  xQueueOverwrite(configQueue, &ack.config);  // loop() tự bỏ qua nếu giống cấu hình đang dùng
+  return true;
 }
 
 void netTask(void*) {
@@ -41,9 +133,8 @@ void netTask(void*) {
   uint32_t attemptStartedAt = 0;
   bool attempting = false;
   bool wasConnected = false;
-  uint32_t lastProbeAt = 0;
-  bool probedSinceConnect = false;
-  bool lastProbeOk = false;
+  uint32_t lastSeq = 0;
+  uint32_t lastBoot = 0;
 
   for (;;) {
     const uint32_t now = millis();
@@ -54,32 +145,9 @@ void netTask(void*) {
         attempting = false;
         backoff = WIFI_BACKOFF_MIN_MS;
         wifiConnects = wifiConnects + 1;
-        currentLink = LinkState::WIFI_ONLY;
-        probedSinceConnect = false;
+        currentLink = LinkState::WIFI_ONLY;  // tới khi lần POST đầu tiên thành công
         Serial.printf("[WIFI] Da ket noi \"%s\", IP ESP32 %s, RSSI %d dBm\n", WIFI_SSID,
                       WiFi.localIP().toString().c_str(), WiFi.RSSI());
-      }
-      // Tuần 1: thăm dò server tạm. Khi có POST thật, kết quả POST sẽ quyết định LED xanh.
-      if (!probedSinceConnect || now - lastProbeAt >= PROBE_PERIOD_MS) {
-        lastProbeAt = now;
-        bool ok = probeServer();
-        // Lỗi lẻ tẻ (router/laptop trả lời chậm) thì thử lại ngay một lần trước khi báo mất server.
-        // Server tắt thật thì kết nối bị từ chối tức thì nên vẫn phát hiện trong ~5 s (tình huống 3).
-        if (!ok && WiFi.status() == WL_CONNECTED) {
-          ok = probeServer();
-          if (ok) Serial.println("[SERVER] Tham do loi le, thu lai thanh cong");
-        }
-        if (!probedSinceConnect || ok != lastProbeOk) {
-          if (ok) {
-            Serial.printf("[SERVER] Toi duoc http://%s:%d\n", SERVER_HOST, SERVER_PORT);
-          } else {
-            Serial.printf("[SERVER] KHONG toi duoc http://%s:%d (server chua chay / sai IP / tuong lua / Wi-Fi chan thiet bi noi nhau)\n",
-                          SERVER_HOST, SERVER_PORT);
-          }
-        }
-        probedSinceConnect = true;
-        lastProbeOk = ok;
-        if (WiFi.status() == WL_CONNECTED) currentLink = ok ? LinkState::SERVER_OK : LinkState::WIFI_ONLY;
       }
     } else {
       if (wasConnected) {
@@ -108,13 +176,15 @@ void netTask(void*) {
     // Nhận mẫu mới nhất từ loop(). Chờ tối đa 100 ms để vòng lặp này không chiếm CPU.
     Sample s;
     if (xQueueReceive(sampleQueue, &s, pdMS_TO_TICKS(100)) == pdTRUE) {
-      samplesReceived = samplesReceived + 1;
-      // ----- TODO(phoi hop TV2): làm sau khi nhóm chốt JSON/API -----
-      // 1. Tạo JSON từ s cùng DEVICE_ID và boot_id; số đo NAN -> null; mã trạng thái theo bảng TV2 chốt.
-      // 2. POST serverUrl("/api/measurements"), timeout như probeServer().
-      // 3. Phản hồi 2xx: currentLink = SERVER_OK; đọc cấu hình trong phản hồi; nếu khác cấu hình đang dùng
-      //    thì xQueueOverwrite(configQueue, &cauHinhMoi) để loop() áp dụng và lưu.
-      // 4. Lỗi: currentLink = WIFI_ONLY; KHÔNG gửi lại mẫu cũ (bản cơ bản không lưu bù lịch sử).
+      // Mẫu bị đè trong hàng đợi dài 1 (đang bận gửi mẫu trước) thì seq nhảy cóc.
+      if (s.bootId == lastBoot && s.seq > lastSeq + 1) statOverwritten = statOverwritten + (s.seq - lastSeq - 1);
+      lastBoot = s.bootId;
+      lastSeq = s.seq;
+      if (WiFi.status() == WL_CONNECTED) {
+        sendSample(s);
+      } else {
+        statNoWifi = statNoWifi + 1;  // không lưu bù
+      }
     }
   }
 }
@@ -125,7 +195,7 @@ void netBegin() {
   configQueue = xQueueCreate(1, sizeof(AlertConfig));
   WiFi.setAutoReconnect(false);  // tự quản lý việc kết nối lại để có khoảng chờ tăng dần
   // Tắt modem sleep: thiết bị cắm điện liên tục; khi bật, ESP32 thỉnh thoảng phản hồi trễ
-  // quá HTTP_CONNECT_TIMEOUT_MS làm một lần thăm dò lỗi lẻ tẻ (thấy khi thử tình huống 2).
+  // quá HTTP_CONNECT_TIMEOUT_MS làm một lần gửi lỗi lẻ tẻ (thấy khi thử tình huống 2).
   WiFi.setSleep(false);
   xTaskCreatePinnedToCore(netTask, "net", 8192, nullptr, 1, nullptr, 0);
 }
@@ -147,7 +217,10 @@ void netPrintStatus() {
   } else {
     Serial.printf("  Wi-Fi: chua ket noi \"%s\"\n", WIFI_SSID);
   }
-  Serial.printf("  Server: http://%s:%d -> %s\n", SERVER_HOST, SERVER_PORT, linkStateName(currentLink));
-  Serial.printf("  Mau da chuyen cho tac vu mang: %lu (chua gui: cho JSON/API cua TV2)\n",
-                (unsigned long)samplesReceived);
+  Serial.printf("  Server: %s -> %s\n", serverUrl("/api/measurements").c_str(), linkStateName(currentLink));
+  Serial.printf("  Gui: thanh cong %lu (trung %lu, gui lai moi duoc %lu) | loi %lu | bo vi chua co Wi-Fi %lu | "
+                "bi mau moi de %lu\n",
+                (unsigned long)statSent, (unsigned long)statDuplicate, (unsigned long)statRetryOk,
+                (unsigned long)statFailed, (unsigned long)statNoWifi, (unsigned long)statOverwritten);
+  Serial.printf("  Lan gui cuoi: HTTP %d, %lu ms\n", (int)lastHttpCode, (unsigned long)lastPostMs);
 }
