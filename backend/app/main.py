@@ -16,7 +16,8 @@ from fastapi.staticfiles import StaticFiles
 
 from . import config, db
 from .quality import flag_measurement
-from .schemas import DeviceConfig, MeasurementAck, MeasurementIn
+from .schemas import (DEMO_SCENARIOS, DemoCommand, DemoRequest, DeviceConfig, MeasurementAck,
+                      MeasurementIn)
 
 RANGE_RE = re.compile(r"^(\d{1,3})([mhd])$")
 RANGE_UNITS = {"m": "minutes", "h": "hours", "d": "days"}
@@ -46,6 +47,41 @@ def _measurement_out(row) -> dict:
     }
 
 
+def _pending_demo(app: FastAPI, server_now: datetime) -> Optional[DemoCommand]:
+    """Lệnh demo còn hạn để gửi kèm phản hồi; ESP32 tự bỏ qua id đã chạy."""
+    req = app.state.demo_request
+    if not req:
+        return None
+    age = (server_now - req["requested_at"]).total_seconds()
+    if age > config.DEMO_COMMAND_TTL_S:
+        return None
+    return DemoCommand(id=req["id"], scenario=req["scenario"], age_s=round(max(age, 0.0), 1))
+
+
+def _demo_state(app: FastAPI, server_now: datetime, device_id: Optional[str]) -> dict:
+    req = app.state.demo_request
+    live = app.state.device_live
+    if device_id is None and live:
+        device_id = max(live, key=lambda d: live[d]["updated_at"])  # thiết bị gửi gần nhất
+    dev = live.get(device_id) if device_id else None
+    return {
+        "scenarios": list(DEMO_SCENARIOS),
+        "request": None if not req else {
+            "id": req["id"],
+            "scenario": req["scenario"],
+            "requested_at": db.to_iso(req["requested_at"]),
+            "age_s": round((server_now - req["requested_at"]).total_seconds(), 1),
+        },
+        "device": None if not dev else {
+            "device_id": device_id,
+            "alert_state": dev["alert_state"],
+            "demo": dev["demo"],
+            "updated_at": dev["updated_at"],
+            "seconds_since": round((server_now - db.from_iso(dev["updated_at"])).total_seconds(), 1),
+        },
+    }
+
+
 def _parse_time(value: str, name: str) -> datetime:
     try:
         return db.from_iso(value)
@@ -66,6 +102,9 @@ def create_app(db_path: Optional[Path] = None, frontend_dir: Optional[Path] = No
     app = FastAPI(title="Giám sát môi trường phòng học", version="1.0.0", lifespan=lifespan)
     app.state.db_path = db_path
     app.state.clock = clock  # test có thể thay bằng đồng hồ giả
+    # Chế độ demo (v1.1) – chỉ trong RAM, khởi động lại backend là mất (không cần lưu).
+    app.state.demo_request = None  # {"id", "scenario", "requested_at"} lần bấm nút gần nhất
+    app.state.device_live = {}     # device_id -> {"alert_state", "demo", "updated_at"} từ gói mới nhất
 
     # Cho phép TV3 mở giao diện từ Live Server / file khác cổng khi phát triển
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
@@ -115,7 +154,16 @@ def create_app(db_path: Optional[Path] = None, frontend_dir: Optional[Path] = No
             )
             # TODO tuần 2: cập nhật sự kiện cảnh báo (alerts) từ mẫu mới
             settings = db.current_settings(conn)
-        return MeasurementAck(ok=True, duplicate=duplicate, config=_device_config(settings))
+
+        server_now = now(request)
+        if not duplicate:
+            request.app.state.device_live[m.device_id] = {
+                "alert_state": m.alert_state.model_dump() if m.alert_state else None,
+                "demo": m.demo.model_dump() if m.demo else None,
+                "updated_at": received_at,
+            }
+        return MeasurementAck(ok=True, duplicate=duplicate, config=_device_config(settings),
+                              demo=_pending_demo(request.app, server_now))
 
     # ----------------------------------------------------------------- latest
     @app.get("/api/latest", tags=["website"])
@@ -218,6 +266,22 @@ def create_app(db_path: Optional[Path] = None, frontend_dir: Optional[Path] = No
             ).fetchone()
         settings["applied_version"] = applied[0] if applied else None
         return settings
+
+    # ------------------------------------------------------------------- demo
+    # Website bấm nút -> lệnh nằm ở đây -> đi kèm phản hồi POST tiếp theo của ESP32 (<= 5 s).
+    @app.post("/api/demo", tags=["demo"])
+    def post_demo(req: DemoRequest, request: Request):
+        server_now = now(request)
+        request.app.state.demo_request = {
+            "id": str(int(server_now.timestamp() * 1000)),  # mỗi lần bấm một id mới, kể cả sau khi khởi động lại
+            "scenario": req.scenario,
+            "requested_at": server_now,
+        }
+        return _demo_state(request.app, server_now, None)
+
+    @app.get("/api/demo", tags=["demo"])
+    def get_demo(request: Request, device_id: Optional[str] = None):
+        return _demo_state(request.app, now(request), device_id)
 
     # TODO tuần 2: PUT /api/settings, GET /api/alerts; tuần 3: GET /api/export.csv
 

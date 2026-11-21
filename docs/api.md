@@ -211,8 +211,63 @@ Lược đồ đầy đủ: `backend/app/db.py`.
 
 ---
 
+## 7. Chế độ demo – v1.1 (TV1 thêm để trình bày, TV2 xem lại)
+
+Mục đích: lúc trình bày không chờ được phòng nóng lên / tối đi. Website bấm nút, ESP32 **tự phát số đo của tình huống** (mỗi mẫu 5 s) qua đúng đường thật: cảnh báo tại thiết bị, LED, còi, `POST /api/measurements`, các thẻ trên website. Về đo thật: nút "Về đo thật" hoặc nút EN trên ESP32. Mọi trường dưới đây **không bắt buộc**: firmware/website cũ chạy như v1.
+
+Lưu ý: số đo demo được lưu vào `measurements` như số thật (gói có trường `demo` để nhận ra).
+
+### `POST /api/demo` – website bấm nút
+
+```json
+{ "scenario": "temp_high" }
+```
+
+`scenario`: `temp_high` | `hum_high` | `light_low` | `dht_error` | `error_during_alert` | `bh1750_lost` | `out_of_range` | `offline` | `stop` (về đo thật). Sai tên → `422`. Trả về giống `GET /api/demo`.
+
+Backend giữ lệnh trong RAM (khởi động lại là mất) và gửi kèm phản hồi POST của ESP32 trong `DEMO_COMMAND_TTL_S = 120` s:
+
+```json
+{ "ok": true, "duplicate": false, "config": { … }, "demo": { "id": "1795244197284", "scenario": "temp_high", "age_s": 3.0 } }
+```
+
+- Mỗi lần bấm một `id` mới (mili giây UTC). ESP32 chỉ chạy khi `id` khác lần trước.
+- Sau khi bấm EN, ESP32 bỏ qua lệnh có `age_s > 20` (để reset là về đo thật).
+- Không có lệnh: `"demo": null`.
+
+### Trường thêm trong gói đo (ESP32 → backend)
+
+```json
+"alert_state": { "temperature": "active", "humidity": "normal", "light": "off" },
+"demo": { "scenario": "temp_high", "sample": 3, "total": 7 }
+```
+
+- `alert_state`: trạng thái cảnh báo **tại thiết bị** (LED/còi): `normal` | `active` | `unknown` (chưa xác định) | `off` (ánh sáng không xét). Gửi ở mọi gói.
+- `demo`: chỉ có khi đang phát kịch bản.
+
+### `GET /api/demo` – website hiển thị tiến độ
+
+```json
+{
+  "scenarios": ["temp_high", "hum_high", "light_low", "dht_error", "error_during_alert", "bh1750_lost", "out_of_range", "offline"],
+  "request": { "id": "1795244197284", "scenario": "temp_high", "requested_at": "2026-11-21T06:56:37.284Z", "age_s": 24.1 },
+  "device": {
+    "device_id": "esp32-phong01",
+    "alert_state": { "temperature": "active", "humidity": "normal", "light": "off" },
+    "demo": { "scenario": "temp_high", "sample": 4, "total": 7 },
+    "updated_at": "2026-11-21T06:56:59.157Z",
+    "seconds_since": 1.2
+  }
+}
+```
+
+Tham số không bắt buộc `device_id`; mặc định thiết bị gửi gần nhất. Kịch bản (số mẫu, giá trị) nằm ở `firmware/tv1_firmware/demo.cpp`; giao diện ở `frontend/js/demo.js`.
+
+---
+
 ## Lịch sử thay đổi
 
 | Phiên bản | Ngày | Nội dung |
 | --- | --- | --- |
 | v1 | 26/10/2026 | Bản đầu: measurements, latest, history, settings (đọc), health |
+| v1.1 | 21/11/2026 | TV1: chế độ demo (`POST/GET /api/demo`, `demo` trong phản hồi), `alert_state` + `demo` (không bắt buộc) trong gói đo |

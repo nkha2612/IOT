@@ -17,6 +17,7 @@
 namespace {
 QueueHandle_t sampleQueue = nullptr;  // dài 1: chỉ giữ mẫu mới nhất
 QueueHandle_t configQueue = nullptr;  // dài 1: cấu hình mới từ backend, loop() lấy ra áp dụng
+QueueHandle_t demoQueue = nullptr;    // dài 1: lệnh demo trong phản hồi gần nhất
 volatile LinkState currentLink = LinkState::NO_WIFI;
 volatile uint32_t wifiConnects = 0;
 
@@ -72,9 +73,27 @@ void setLink(bool ok, int code) {
 // Gửi một mẫu và xử lý phản hồi. Trả về true nếu backend đã nhận.
 bool sendSample(const Sample& s) {
   static bool warnedConfirm = false;
-  char body[320];
-  const MeasurementPayload p{DEVICE_ID, s.bootId, s.seq,  s.uptimeMs, s.temperature, s.humidity,
-                             s.lux,     s.dht,    s.light, s.configVersion};
+  char body[512];
+  auto alertName = [&](int shift) { return alertStateApiName((AlertState)((s.alertFlags >> shift) & 3)); };
+  MeasurementPayload p{};
+  p.deviceId = DEVICE_ID;
+  p.bootId = s.bootId;
+  p.seq = s.seq;
+  p.uptimeMs = s.uptimeMs;
+  p.temperature = s.temperature;
+  p.humidity = s.humidity;
+  p.lux = s.lux;
+  p.dht = s.dht;
+  p.light = s.light;
+  p.configVersion = s.configVersion;
+  p.alertTemp = alertName(0);
+  p.alertHum = alertName(2);
+  p.alertLight = s.lightChecked ? alertName(4) : "off";
+  if (s.demo != DemoScenario::NONE) {
+    p.demoScenario = demoScenarioName(s.demo);
+    p.demoSample = s.demoSample;
+    p.demoTotal = s.demoTotal;
+  }
   const size_t len = buildMeasurementJson(p, body, sizeof body);
   if (len == 0) {
     Serial.println("[SERVER] LOI: goi do vuot bo dem, khong gui");
@@ -124,6 +143,14 @@ bool sendSample(const Sample& s) {
                   (unsigned long)ack.confirmSamples, (unsigned)ALERT_CONFIRM_SAMPLES);
   }
   xQueueOverwrite(configQueue, &ack.config);  // loop() tự bỏ qua nếu giống cấu hình đang dùng
+  DemoCommand dc{};
+  dc.present = ack.hasDemo;
+  if (ack.hasDemo) {
+    strlcpy(dc.id, ack.demoId, sizeof dc.id);
+    strlcpy(dc.scenario, ack.demoScenario, sizeof dc.scenario);
+    dc.ageS = ack.demoAgeS;
+  }
+  xQueueOverwrite(demoQueue, &dc);  // gửi cả khi không có lệnh: loop() dùng lần đầu làm mốc sau khởi động
   return true;
 }
 
@@ -193,6 +220,7 @@ void netTask(void*) {
 void netBegin() {
   sampleQueue = xQueueCreate(1, sizeof(Sample));
   configQueue = xQueueCreate(1, sizeof(AlertConfig));
+  demoQueue = xQueueCreate(1, sizeof(DemoCommand));
   WiFi.setAutoReconnect(false);  // tự quản lý việc kết nối lại để có khoảng chờ tăng dần
   // Tắt modem sleep: thiết bị cắm điện liên tục; khi bật, ESP32 thỉnh thoảng phản hồi trễ
   // quá HTTP_CONNECT_TIMEOUT_MS làm một lần gửi lỗi lẻ tẻ (thấy khi thử tình huống 2).
@@ -208,6 +236,10 @@ LinkState netLinkState() { return currentLink; }
 
 bool netPollConfig(AlertConfig& out) {
   return configQueue && xQueueReceive(configQueue, &out, 0) == pdTRUE;
+}
+
+bool netPollDemo(DemoCommand& out) {
+  return demoQueue && xQueueReceive(demoQueue, &out, 0) == pdTRUE;
 }
 
 void netPrintStatus() {

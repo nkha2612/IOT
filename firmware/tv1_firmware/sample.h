@@ -1,8 +1,8 @@
 // sample.h – Một mẫu đo, đủ các trường của gói đo trong docs/api.md (API v1).
-// alertFlags chỉ dùng tại chỗ (lệnh show), không gửi lên backend.
 #pragma once
 #include <Arduino.h>
 #include "sensors.h"
+#include "demo.h"
 
 struct Sample {
   uint32_t bootId;         // boot_id: ngẫu nhiên mỗi lần khởi động (gửi dạng 8 ký tự hex)
@@ -15,4 +15,8 @@ struct Sample {
   SensorStatus light;      // sensor_status.bh1750
   uint32_t configVersion;  // config_version_applied: phiên bản cấu hình ESP32 đang dùng
   uint8_t alertFlags;      // trạng thái cảnh báo tại chỗ, 2 bit mỗi loại (0/1/2 = bình thường/cảnh báo/chưa xác định)
+  bool lightChecked;       // đang xét cảnh báo ánh sáng (phòng đang sử dụng hoặc demo thiếu sáng)
+  DemoScenario demo;       // NONE = số đo thật
+  uint8_t demoSample;      // mẫu demo thứ mấy (1..demoTotal)
+  uint8_t demoTotal;
 };

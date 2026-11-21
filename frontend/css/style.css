@@ -202,3 +202,119 @@ body {
 #cards.is-stale .value {
   opacity: 0.55;
 }
+
+/* ---------- Cảnh báo tại thiết bị + kiểm tra tình huống (js/demo.js) ---------- */
+
+#demo {
+  display: grid;
+  gap: 1rem;
+  width: min(100% - 2rem, 64rem);
+  margin: 1rem auto 0;
+}
+
+#demo-alerts,
+#demo-panel {
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+#demo-alerts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1.5rem;
+}
+
+#demo-alerts h2 {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+#demo-alerts p {
+  margin: 0;
+}
+
+#demo-alerts .state {
+  margin-left: 0.35rem;
+  padding: 0.1rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+#demo-alerts .state.ok      { color: var(--online); border-color: var(--online); }
+#demo-alerts .state.active  { color: var(--banner-ink); background: var(--banner-bg); border-color: var(--banner-bg); }
+#demo-alerts .state.unknown { color: var(--fault); border-color: var(--fault); border-style: dashed; }
+
+#demo-panel summary {
+  font-size: 1.25rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#demo-panel .hint,
+#demo-step {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+#demo-buttons {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: 0.6rem;
+  margin: 0.75rem 0;
+}
+
+#demo-buttons button,
+#demo-stop {
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+#demo-buttons button small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+#demo-buttons button:hover,
+#demo-stop:hover:not(:disabled) {
+  border-color: var(--ink);
+}
+
+#demo-buttons button.is-running {
+  border: 2px solid var(--online);
+  background: color-mix(in srgb, var(--online) 14%, var(--surface));
+}
+
+#demo-status {
+  margin: 0.5rem 0 0.25rem;
+  font-weight: 700;
+}
+
+#demo-progress {
+  width: 100%;
+  height: 0.6rem;
+  accent-color: var(--online);
+}
+
+#demo-step {
+  min-height: 1.4em;
+  margin: 0.25rem 0 0.75rem;
+}
+
+#demo-stop:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

@@ -51,6 +51,12 @@ sim off
 reset              # về mặc định và nhận lại cấu hình từ backend
 ```
 
+## Chế độ demo khi trình bày
+
+Website (mục "Kiểm tra tình huống") có 8 nút: nhiệt độ cao, độ ẩm cao, thiếu sáng, lỗi DHT22, lỗi khi đang cảnh báo, mất BH1750, ngoài miền đo, mất kết nối. Bấm nút thì ESP32 nhận lệnh trong phản hồi POST kế tiếp (≤ 5 s) và tự phát số đo của tình huống, 5 s một mẫu, qua đúng logic cảnh báo, LED, còi, backend, website. Mỗi kịch bản 15–45 s, xong tự về đo thật. Dừng sớm: nút "Về đo thật" hoặc **nút EN** trên ESP32 (lệnh cũ hơn 20 s bị bỏ qua sau khi khởi động lại).
+
+Không có website: lệnh Serial `demo` (liệt kê), `demo 1`…`demo 8`, `demo stop`. Bảng kịch bản: `tv1_firmware/demo.cpp`; kiểm thử: `test_host/test_demo.cpp`; API: mục 7 `docs/api.md`.
+
 ## Ghi chú thiết kế
 
 - Gửi chạy ở tác vụ mạng (lõi 0), không làm trễ nhịp đo. Không lưu bù: mất mạng thì bỏ mẫu.

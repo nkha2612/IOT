@@ -3,6 +3,7 @@
 #include <ArduinoJson.h>  // thư viện "ArduinoJson" (Benoit Blanchon) 7.x
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 const char* sensorStatusApiName(SensorStatus s) {
   switch (s) {
@@ -14,6 +15,15 @@ const char* sensorStatusApiName(SensorStatus s) {
 }
 
 void formatBootId(uint32_t bootId, char out[9]) { snprintf(out, 9, "%08lx", (unsigned long)bootId); }
+
+const char* alertStateApiName(AlertState s) {
+  switch (s) {
+    case AlertState::NORMAL:  return "normal";
+    case AlertState::ACTIVE:  return "active";
+    case AlertState::UNKNOWN: return "unknown";
+  }
+  return "unknown";
+}
 
 namespace {
 // Số đo làm tròn 1 chữ số (docs/api.md). Ghi bằng snprintf để JSON là "28.4" chứ không phải
@@ -46,6 +56,18 @@ size_t buildMeasurementJson(const MeasurementPayload& p, char* out, size_t n) {
   st["dht22"] = sensorStatusApiName(p.dht);
   st["bh1750"] = sensorStatusApiName(p.light);
   doc["config_version_applied"] = p.configVersion;
+  if (p.alertTemp && p.alertHum && p.alertLight) {
+    JsonObject al = doc["alert_state"].to<JsonObject>();
+    al["temperature"] = p.alertTemp;
+    al["humidity"] = p.alertHum;
+    al["light"] = p.alertLight;
+  }
+  if (p.demoScenario) {
+    JsonObject dm = doc["demo"].to<JsonObject>();
+    dm["scenario"] = p.demoScenario;
+    dm["sample"] = p.demoSample;
+    dm["total"] = p.demoTotal;
+  }
 
   const size_t need = measureJson(doc);
   if (need + 1 > n) return 0;
@@ -80,5 +102,18 @@ const char* parseMeasurementAck(const char* body, size_t len, MeasurementAck& ou
   if (const char* err = validateAlertConfig(cfg)) return err;
   out.config = cfg;
   out.confirmSamples = c["confirm_samples"] | (uint32_t)ALERT_CONFIRM_SAMPLES;
+
+  // Lệnh demo (không bắt buộc). Sai định dạng thì bỏ qua lệnh, không làm hỏng cấu hình đã đọc.
+  out.hasDemo = false;
+  out.demoId[0] = out.demoScenario[0] = '\0';
+  JsonObjectConst dm = doc["demo"];
+  const char* id = dm["id"];
+  const char* sc = dm["scenario"];
+  if (id && sc && std::strlen(id) < sizeof out.demoId && std::strlen(sc) < sizeof out.demoScenario && *id) {
+    std::strcpy(out.demoId, id);
+    std::strcpy(out.demoScenario, sc);
+    out.demoAgeS = dm["age_s"] | 0.0f;
+    out.hasDemo = true;
+  }
   return nullptr;
 }

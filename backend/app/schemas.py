@@ -14,6 +14,46 @@ class SensorStatus(BaseModel):
     bh1750: SensorState
 
 
+# ----------------------------------------------------------------- chế độ demo (v1.1)
+# Kịch bản firmware biết chạy (firmware/tv1_firmware/demo.cpp). "stop" = về đo thật.
+DEMO_SCENARIOS = ("temp_high", "hum_high", "light_low", "dht_error",
+                  "error_during_alert", "bh1750_lost", "out_of_range", "offline")
+DemoName = Literal["temp_high", "hum_high", "light_low", "dht_error",
+                   "error_during_alert", "bh1750_lost", "out_of_range", "offline"]
+
+AlertStateName = Literal["normal", "active", "unknown", "off"]
+
+
+class LocalAlertState(BaseModel):
+    """Trạng thái cảnh báo tại thiết bị (LED/còi), firmware gửi kèm mỗi gói."""
+
+    temperature: AlertStateName
+    humidity: AlertStateName
+    light: AlertStateName
+
+
+class DemoProgress(BaseModel):
+    """Firmware đang phát kịch bản demo: mẫu thứ sample / total."""
+
+    scenario: str = Field(max_length=32)
+    sample: int = Field(ge=0)
+    total: int = Field(ge=0)
+
+
+class DemoRequest(BaseModel):
+    """Website bấm nút demo."""
+
+    scenario: Literal[DemoName, "stop"]  # type: ignore[valid-type]
+
+
+class DemoCommand(BaseModel):
+    """Lệnh demo gửi xuống ESP32 trong phản hồi POST /api/measurements."""
+
+    id: str
+    scenario: str
+    age_s: float
+
+
 class MeasurementIn(BaseModel):
     """Gói đo ESP32 gửi lên mỗi 5 giây."""
 
@@ -28,6 +68,9 @@ class MeasurementIn(BaseModel):
     lux: Optional[float] = None
     sensor_status: SensorStatus
     config_version_applied: Optional[int] = Field(default=None, ge=0)
+    # v1.1 – không bắt buộc, firmware cũ không gửi
+    alert_state: Optional[LocalAlertState] = None
+    demo: Optional[DemoProgress] = None
 
     @field_validator("temperature", "humidity", "lux", mode="before")
     @classmethod
@@ -54,3 +97,4 @@ class MeasurementAck(BaseModel):
     ok: bool
     duplicate: bool
     config: DeviceConfig
+    demo: Optional[DemoCommand] = None  # v1.1: chỉ có trong DEMO_COMMAND_TTL_S sau khi bấm nút

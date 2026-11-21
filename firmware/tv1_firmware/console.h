@@ -8,6 +8,7 @@ struct ConsoleHandlers {
   void (*reset)();                                   // lệnh reset
   bool (*toggleMute)();                              // lệnh mute; trả về true nếu đang tắt tiếng
   const char* (*simLux)(const char* arg);            // lệnh sim; arg nullptr = tắt; trả về nullptr nếu được
+  const char* (*demo)(const char* arg);              // lệnh demo; arg nullptr = liệt kê; trả về nullptr nếu được
 };
 
 void consoleBegin(const ConsoleHandlers& h);

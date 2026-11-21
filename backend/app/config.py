@@ -20,6 +20,9 @@ OFFLINE_AFTER_S = 30
 SAMPLE_PERIOD_S = 5
 GAP_THRESHOLD_S = 15
 
+# Chế độ demo: lệnh bấm trên website được gửi kèm phản hồi cho ESP32 trong khoảng này (giây)
+DEMO_COMMAND_TTL_S = 120
+
 # Giới hạn số điểm trả về cho một lần gọi /api/history
 HISTORY_MAX_ROWS = 50_000
 

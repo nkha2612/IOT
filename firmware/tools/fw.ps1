@@ -78,7 +78,8 @@ switch ($Action) {
     $suites = @(
       @{ name = 'canh bao'; src = @('test_alerts.cpp', '../tv1_firmware/alerts.cpp'); inc = @() },
       @{ name = 'BH1750';   src = @('test_light.cpp', '../tv1_firmware/light.cpp', '../tv1_firmware/alerts.cpp'); inc = @() },
-      @{ name = 'JSON API'; src = @('test_payload.cpp', '../tv1_firmware/payload.cpp', '../tv1_firmware/alerts.cpp'); inc = @("-I$ajson") }
+      @{ name = 'JSON API'; src = @('test_payload.cpp', '../tv1_firmware/payload.cpp', '../tv1_firmware/alerts.cpp'); inc = @("-I$ajson") },
+      @{ name = 'Demo';     src = @('test_demo.cpp', '../tv1_firmware/demo.cpp', '../tv1_firmware/alerts.cpp'); inc = @() }
     )
     $failed = @()
     Push-Location (Join-Path $fw 'test_host')

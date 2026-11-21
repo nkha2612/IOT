@@ -59,8 +59,33 @@ void testDht() {
   }
 }
 
+// Đo mức một đường I2C khi tắt bộ I2C, lần lượt với trở kéo xuống rồi kéo lên bên trong ESP32 (~45 kΩ).
+// Module BH1750 có trở kéo lên (~4,7–10 kΩ) tới VCC của nó, mạnh hơn trở trong ESP32:
+//   kéo xuống vẫn đọc 1  -> có trở kéo lên của module = module có nguồn, dây tới được
+//   kéo xuống 0, kéo lên 1 -> đường hở: dây chưa tới module, hoặc module chưa có nguồn VCC
+//   kéo lên vẫn đọc 0    -> đường bị giữ thấp: chập GND, dính thiếc, hoặc chip chưa có nguồn kẹp xuống
+const char* lineState(uint8_t pin) {
+  pinMode(pin, INPUT_PULLDOWN);
+  delay(3);
+  const int withDown = digitalRead(pin);
+  pinMode(pin, INPUT_PULLUP);
+  delay(3);
+  const int withUp = digitalRead(pin);
+  pinMode(pin, INPUT);
+  if (withDown) return "OK (co tro keo len cua module)";
+  if (withUp) return "HO (day chua toi module hoac module chua co nguon VCC)";
+  return "BI GIU THAP (chap GND / dinh thiec / module chua co nguon)";
+}
+
 void testI2c() {
   Serial.println(F("[5] Quet bus I2C (SDA=GPIO21, SCL=GPIO22)..."));
+  Wire.end();  // tạm tắt I2C để đọc mức chân
+  const char* sda = lineState(PIN_SDA);
+  const char* scl = lineState(PIN_SCL);
+  Serial.printf("    Muc SDA (GPIO21, hang 9):  %s\n", sda);
+  Serial.printf("    Muc SCL (GPIO22, hang 11): %s\n", scl);
+  Wire.begin(PIN_SDA, PIN_SCL);
+  Wire.setClock(100000);
   int found = 0;
   uint8_t bhAddr = 0;
   for (uint8_t a = 1; a < 127; a++) {
@@ -72,6 +97,22 @@ void testI2c() {
     }
   }
   if (found == 0) {
+    // Thử hoán đổi SDA/SCL: thứ tự chân module là VCC-GND-SCL-SDA-ADDR nên rất dễ cắm đảo.
+    Wire.end();
+    Wire.begin(PIN_SCL, PIN_SDA);
+    uint8_t swapped = 0;
+    for (uint8_t a : {(uint8_t)0x23, (uint8_t)0x5C}) {
+      Wire.beginTransmission(a);
+      if (Wire.endTransmission() == 0) swapped = a;
+    }
+    Wire.end();
+    Wire.begin(PIN_SDA, PIN_SCL);
+    Wire.setClock(100000);
+    if (swapped) {
+      Serial.printf("    LOI: SDA va SCL bi DAO (dao lai thi thay BH1750 o 0x%02X).\n", swapped);
+      Serial.println(F("    Sua: chan SDA cua module -> e9, chan SCL -> e11 (rut USB truoc)."));
+      return;
+    }
     Serial.println(F("    LOI: khong thay thiet bi nao."));
     Serial.println(F("    Kiem tra: BH1750 SDA o e9 + GPIO21 o c9; SCL o e11 + GPIO22 o c11;"));
     Serial.println(F("    VCC vao dai A+ (3V3), GND vao dai A-; khong dao SDA/SCL."));

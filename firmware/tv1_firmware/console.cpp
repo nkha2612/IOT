@@ -19,6 +19,7 @@ void printHelp() {
   Serial.println(F("  sim lux 120              gia lap do roi khi chua lap BH1750 (khong luu)"));
   Serial.println(F("  sim lux loi | sim lux mat  gia lap BH1750 loi doc / khong thay"));
   Serial.println(F("  sim off                  tat gia lap, ve cam bien that"));
+  Serial.println(F("  demo | demo 1..8 | demo stop  kich ban trinh bay (website co nut tuong ung); EN = ve do that"));
   Serial.println(F("  reboot                   khoi dong lai ESP32"));
 }
 
@@ -63,6 +64,8 @@ void handleLine(char* text) {
       return;
     }
     if (err) Serial.printf("Khong doi: %s\n", err);
+  } else if (!strcmp(cmd, "demo")) {
+    if (const char* err = handlers.demo(strtok(nullptr, " \t"))) Serial.printf("Khong chay: %s\n", err);
   } else if (!strcmp(cmd, "reboot")) {
     Serial.println(F("Khoi dong lai..."));
     Serial.flush();

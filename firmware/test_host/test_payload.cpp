@@ -21,12 +21,22 @@ static int failures = 0, checks = 0;
   } while (0)
 
 static MeasurementPayload okPayload() {
-  return {"esp32-phong01", 0x7f3a91c2u, 152, 760345, 28.4f, 65.2f, 412.5f,
-          SensorStatus::OK, SensorStatus::OK, 1};
+  MeasurementPayload p{};  // trường thêm (alert_state, demo) để trống = không gửi
+  p.deviceId = "esp32-phong01";
+  p.bootId = 0x7f3a91c2u;
+  p.seq = 152;
+  p.uptimeMs = 760345;
+  p.temperature = 28.4f;
+  p.humidity = 65.2f;
+  p.lux = 412.5f;
+  p.dht = SensorStatus::OK;
+  p.light = SensorStatus::OK;
+  p.configVersion = 1;
+  return p;
 }
 
 static std::string build(const MeasurementPayload& p) {
-  char buf[320];
+  char buf[512];  // cùng cỡ bộ đệm trong net.cpp
   const size_t n = buildMeasurementJson(p, buf, sizeof buf);
   return n ? std::string(buf, n) : std::string();
 }
@@ -87,9 +97,9 @@ static void testBuildEdges() {
   CHECK(js.find("\"seq\":4294967295,") != std::string::npos, "seq toi da 32 bit");
   char tiny[40];
   CHECK(buildMeasurementJson(okPayload(), tiny, sizeof tiny) == 0, "bo dem thieu -> tra 0, khong ghi tran");
-  char exact[320];
+  char exact[512];
   const size_t n = buildMeasurementJson(okPayload(), exact, sizeof exact);
-  CHECK(n > 0 && n < 240, "goi binh thuong nho hon 240 byte (bo dem firmware 320)");
+  CHECK(n > 0 && n < 240, "goi binh thuong nho hon 240 byte (bo dem firmware 512)");
 }
 
 static const char* ACK_DOC =
@@ -151,6 +161,45 @@ static void testParseBad() {
   }
 }
 
+static void testDemoFields() {
+  std::printf("6. Truong demo + alert_state (gui len) va lenh demo (nhan ve)\n");
+  MeasurementPayload p = okPayload();
+  std::string js = build(p);
+  CHECK(js.find("alert_state") == std::string::npos && js.find("\"demo\"") == std::string::npos,
+        "khong dat thi khong gui (goi giong API v1 goc)");
+  p.alertTemp = alertStateApiName(AlertState::ACTIVE);
+  p.alertHum = alertStateApiName(AlertState::NORMAL);
+  p.alertLight = "off";
+  p.demoScenario = "temp_high";
+  p.demoSample = 3;
+  p.demoTotal = 7;
+  js = build(p);
+  JsonDocument d;
+  CHECK(!deserializeJson(d, js), "JSON hop le");
+  CHECK(std::strcmp(d["alert_state"]["temperature"] | "", "active") == 0, "alert_state.temperature = active");
+  CHECK(std::strcmp(d["alert_state"]["light"] | "", "off") == 0, "alert_state.light = off");
+  CHECK(std::strcmp(d["demo"]["scenario"] | "", "temp_high") == 0 && d["demo"]["sample"] == 3 &&
+            d["demo"]["total"] == 7, "demo.scenario/sample/total");
+  CHECK(std::strcmp(alertStateApiName(AlertState::UNKNOWN), "unknown") == 0, "unknown");
+  char buf[512];
+  CHECK(buildMeasurementJson(p, buf, sizeof buf) > 0 && js.size() < 400, "goi day du van vua bo dem 512");
+
+  const std::string ackBase = std::string(ACK_DOC).substr(0, std::strlen(ACK_DOC) - 1);
+  MeasurementAck a{};
+  CHECK(parseMeasurementAck(ACK_DOC, std::strlen(ACK_DOC), a) == nullptr && !a.hasDemo, "khong co demo -> hasDemo false");
+  std::string withDemo = ackBase + ",\"demo\":{\"id\":\"1763700000123\",\"scenario\":\"light_low\",\"age_s\":2.5}}";
+  CHECK(parseMeasurementAck(withDemo.c_str(), withDemo.size(), a) == nullptr, "doc duoc phan hoi co demo");
+  CHECK(a.hasDemo && std::strcmp(a.demoId, "1763700000123") == 0 && std::strcmp(a.demoScenario, "light_low") == 0,
+        "demo.id va demo.scenario");
+  CHECK(std::fabs(a.demoAgeS - 2.5f) < 0.01f, "demo.age_s");
+  CHECK(a.config.version == 1, "cau hinh van doc binh thuong");
+  std::string nullDemo = ackBase + ",\"demo\":null}";
+  CHECK(parseMeasurementAck(nullDemo.c_str(), nullDemo.size(), a) == nullptr && !a.hasDemo, "demo: null -> khong co lenh");
+  std::string longId = ackBase + ",\"demo\":{\"id\":\"" + std::string(40, '9') + "\",\"scenario\":\"stop\"}}";
+  CHECK(parseMeasurementAck(longId.c_str(), longId.size(), a) == nullptr && !a.hasDemo,
+        "id qua dai -> bo qua lenh, khong tran bo dem");
+}
+
 // Ghi các gói mẫu để kiểm bằng schema Pydantic của backend.
 static int dump(const char* dir) {
   struct Named { const char* name; MeasurementPayload p; };
@@ -169,7 +218,17 @@ static int dump(const char* dir) {
   edge.seq = 4294967295u;
   edge.temperature = -40.0f;
   edge.lux = 54612.5f;
-  const Named all[] = {{"fw_ok", okPayload()}, {"fw_dht_error", err}, {"fw_no_bh1750", noLight}, {"fw_edge", edge}};
+  MeasurementPayload demo = okPayload();
+  demo.seq = 155;
+  demo.temperature = 32.5f;
+  demo.alertTemp = "active";
+  demo.alertHum = "normal";
+  demo.alertLight = "off";
+  demo.demoScenario = "temp_high";
+  demo.demoSample = 3;
+  demo.demoTotal = 7;
+  const Named all[] = {{"fw_ok", okPayload()}, {"fw_dht_error", err}, {"fw_no_bh1750", noLight},
+                       {"fw_edge", edge}, {"fw_demo", demo}};
   for (const Named& n : all) {
     const std::string js = build(n.p);
     const std::string path = std::string(dir) + "/" + n.name + ".json";
@@ -192,6 +251,7 @@ int main(int argc, char** argv) {
   testBuildEdges();
   testParseAck();
   testParseBad();
+  testDemoFields();
   std::printf("\n%d/%d kiem tra dat\n", checks - failures, checks);
   return failures ? 1 : 0;
 }

@@ -21,8 +21,28 @@
     <article class="card" data-param="lux"><h2>Ánh sáng</h2><p class="value">—</p><p class="flag"></p></article>
   </section>
 
+  <!-- Cảnh báo tại thiết bị (LED/còi) + chế độ demo để trình bày – js/demo.js, API v1.1 -->
+  <section id="demo">
+    <div id="demo-alerts">
+      <h2>Cảnh báo tại thiết bị</h2>
+      <p data-param="temperature">Nhiệt độ <span class="state">—</span></p>
+      <p data-param="humidity">Độ ẩm <span class="state">—</span></p>
+      <p data-param="light">Ánh sáng <span class="state">—</span></p>
+    </div>
+    <details id="demo-panel" open>
+      <summary>Kiểm tra tình huống (demo)</summary>
+      <p class="hint">ESP32 tự phát số đo của tình huống, mỗi mẫu 5 giây, qua đúng đường thật: cảnh báo, LED, còi, máy chủ và các thẻ phía trên. Về đo thật: bấm “Về đo thật” hoặc nút EN trên ESP32.</p>
+      <div id="demo-buttons"></div>
+      <p id="demo-status" aria-live="polite">Đang tải…</p>
+      <progress id="demo-progress" hidden></progress>
+      <p id="demo-step"></p>
+      <button type="button" id="demo-stop" disabled>Về đo thật</button>
+    </details>
+  </section>
+
   <!-- Tuần 2: biểu đồ, cảnh báo, cài đặt ngưỡng -->
 
   <script src="js/app.js"></script>
+  <script src="js/demo.js"></script>
 </body>
 </html>
