@@ -1,0 +1,5 @@
+# Thông tin Wi-Fi thật, không đưa lên repository
+tv1_firmware/secrets.h
+
+# Log Serial ghi bằng tools/serial_log.py (minh chứng thì chép riêng vào docs/)
+logs/
