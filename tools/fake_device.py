@@ -10,6 +10,10 @@ Ví dụ:
     python tools/fake_device.py --error-rate 0.1        # 10 % mẫu lỗi đọc DHT22/BH1750
     python tools/fake_device.py --interval 1 --count 50 # gửi nhanh 50 mẫu rồi dừng
     python tools/fake_device.py --url http://192.168.1.10:8000
+
+Số đo giả lập được gắn nguồn "sim" (API v1.2) nên không lẫn vào dữ liệu thật: biểu đồ,
+CSV và đánh giá mặc định chỉ lấy dữ liệu thật; trên website tích "Hiện cả dữ liệu demo/giả lập"
+để xem. Chỉ dùng --source real khi cố ý thử như thiết bị thật trên một database riêng.
 """
 
 import argparse
@@ -69,6 +73,8 @@ def main() -> int:
     ap.add_argument("--dup-rate", type=float, default=0.0,
                     help="xác suất gửi lại gói trước (thử chống ghi trùng), 0–1")
     ap.add_argument("--seed", type=int, default=None, help="cố định ngẫu nhiên để lặp lại được")
+    ap.add_argument("--source", choices=("sim", "real", "demo"), default="sim",
+                    help="nguồn gắn cho số đo (mặc định sim – không lẫn vào dữ liệu thật)")
     args = ap.parse_args()
 
     rng = random.Random(args.seed)
@@ -104,6 +110,7 @@ def main() -> int:
                     "lux": lux,
                     "sensor_status": {"dht22": dht, "bh1750": bh},
                     "config_version_applied": config_version,
+                    "source": args.source,
                 }
                 tag = "mới"
             try:

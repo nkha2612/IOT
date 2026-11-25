@@ -4,6 +4,8 @@ Chạy (từ thư mục backend/):
     uvicorn app.main:app --host 0.0.0.0 --port 8000
 """
 
+import csv
+import io
 import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -12,12 +14,13 @@ from typing import Callable, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import config, db
-from .quality import flag_measurement
+from .ingest import ingest
 from .schemas import (DEMO_SCENARIOS, DemoCommand, DemoRequest, DeviceConfig, MeasurementAck,
-                      MeasurementIn)
+                      MeasurementIn, SettingsUpdate)
 
 RANGE_RE = re.compile(r"^(\d{1,3})([mhd])$")
 RANGE_UNITS = {"m": "minutes", "h": "hours", "d": "days"}
@@ -44,7 +47,28 @@ def _measurement_out(row) -> dict:
             "lux": row["lux_flag"],
         },
         "flag_reason": row["flag_reason"],
+        "source": row["source"],
     }
+
+
+ALERT_LABEL = {"temp_high": "Nhiệt độ cao", "hum_high": "Độ ẩm cao", "lux_low": "Thiếu sáng"}
+
+
+def _alert_out(row, server_now: datetime) -> dict:
+    out = dict(row)
+    end = db.from_iso(row["ended_at"]) if row["ended_at"] else server_now
+    out["label"] = ALERT_LABEL.get(row["type"], row["type"])
+    out["duration_s"] = round((end - db.from_iso(row["started_at"])).total_seconds(), 1)
+    return out
+
+
+def _source_sql(source: str) -> tuple[str, list]:
+    """Điều kiện lọc nguồn dữ liệu: real | demo | sim | all."""
+    if source == "all":
+        return "", []
+    if source not in config.SOURCES:
+        raise HTTPException(400, "Tham số 'source' phải là real, demo, sim hoặc all")
+    return " AND source = ?", [source]
 
 
 def _pending_demo(app: FastAPI, server_now: datetime) -> Optional[DemoCommand]:
@@ -89,6 +113,27 @@ def _parse_time(value: str, name: str) -> datetime:
         raise HTTPException(400, f"Tham số '{name}' không đúng định dạng ISO 8601: {value!r}")
 
 
+def _window(server_now: datetime, range_: str, from_: Optional[str], to: Optional[str]):
+    """Khoảng thời gian từ tham số range hoặc from/to (dùng chung cho history, alerts, export)."""
+    end = _parse_time(to, "to") if to else server_now
+    if from_:
+        start = _parse_time(from_, "from")
+    else:
+        match = RANGE_RE.match(range_)
+        if not match:
+            raise HTTPException(400, "Tham số 'range' phải có dạng số + m/h/d, ví dụ 1h, 24h")
+        start = end - timedelta(**{RANGE_UNITS[match.group(2)]: int(match.group(1))})
+    if start >= end:
+        raise HTTPException(400, "'from' phải trước 'to'")
+    return start, end
+
+
+RANGE_Q = Query("1h", alias="range", description="Khoảng gần nhất: 30m, 1h, 24h, 7d… (bỏ qua nếu có 'from')")
+FROM_Q = Query(None, alias="from", description="ISO 8601, ví dụ 2026-10-26T08:00:00+07:00")
+TO_Q = Query(None, description="ISO 8601; mặc định là bây giờ")
+SOURCE_Q = Query("real", description="real (mặc định) | demo | sim | all")
+
+
 def create_app(db_path: Optional[Path] = None, frontend_dir: Optional[Path] = None,
                clock: Callable[[], datetime] = db.utc_now) -> FastAPI:
     db_path = Path(db_path or config.DB_PATH)
@@ -121,46 +166,17 @@ def create_app(db_path: Optional[Path] = None, frontend_dir: Optional[Path] = No
     # ------------------------------------------------------- POST measurements
     @app.post("/api/measurements", response_model=MeasurementAck, tags=["thiết bị"])
     def post_measurement(m: MeasurementIn, request: Request):
-        received_at = db.to_iso(now(request))
-        flags = flag_measurement(m)
+        received_at = now(request)
         with db.session(request.app.state.db_path) as conn:
-            cur = conn.execute(
-                """INSERT OR IGNORE INTO measurements
-                   (device_id, boot_id, seq, uptime_ms, received_at, temperature, humidity, lux,
-                    dht22_status, bh1750_status, temp_flag, hum_flag, lux_flag, flag_reason)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    m.device_id, m.boot_id, m.seq, m.uptime_ms, received_at,
-                    m.temperature, m.humidity, m.lux,
-                    m.sensor_status.dht22, m.sensor_status.bh1750,
-                    flags["temp_flag"], flags["hum_flag"], flags["lux_flag"], flags["flag_reason"],
-                ),
-            )
-            duplicate = cur.rowcount == 0
-
-            # Thiết bị vẫn đang gửi (kể cả gửi lại) nên luôn cập nhật last_seen_at
-            conn.execute(
-                """INSERT INTO devices (device_id, first_seen_at, last_seen_at, last_boot_id,
-                                        last_seq, applied_config_version)
-                   VALUES (?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(device_id) DO UPDATE SET
-                       last_seen_at = excluded.last_seen_at,
-                       last_boot_id = excluded.last_boot_id,
-                       last_seq = CASE WHEN ? THEN devices.last_seq ELSE excluded.last_seq END,
-                       applied_config_version = COALESCE(excluded.applied_config_version,
-                                                         devices.applied_config_version)""",
-                (m.device_id, received_at, received_at, m.boot_id, m.seq,
-                 m.config_version_applied, duplicate),
-            )
-            # TODO tuần 2: cập nhật sự kiện cảnh báo (alerts) từ mẫu mới
-            settings = db.current_settings(conn)
+            res = ingest(conn, m, received_at)
+        duplicate, settings = res["duplicate"], res["settings"]
 
         server_now = now(request)
         if not duplicate:
             request.app.state.device_live[m.device_id] = {
                 "alert_state": m.alert_state.model_dump() if m.alert_state else None,
                 "demo": m.demo.model_dump() if m.demo else None,
-                "updated_at": received_at,
+                "updated_at": db.to_iso(received_at),
             }
         return MeasurementAck(ok=True, duplicate=duplicate, config=_device_config(settings),
                               demo=_pending_demo(request.app, server_now))
@@ -196,7 +212,7 @@ def create_app(db_path: Optional[Path] = None, frontend_dir: Optional[Path] = No
                     (dev["device_id"],),
                 ).fetchone()
                 measurement_out = _measurement_out(row) if row else None
-                open_alerts = [dict(r) for r in conn.execute(
+                open_alerts = [_alert_out(r, server_now) for r in conn.execute(
                     """SELECT * FROM alerts WHERE device_id = ? AND status != 'closed'
                        ORDER BY started_at""", (dev["device_id"],))]
 
@@ -214,28 +230,13 @@ def create_app(db_path: Optional[Path] = None, frontend_dir: Optional[Path] = No
 
     # ---------------------------------------------------------------- history
     @app.get("/api/history", tags=["website"])
-    def get_history(
-        request: Request,
-        range_: str = Query("1h", alias="range",
-                            description="Khoảng gần nhất: 30m, 1h, 24h, 7d… (bỏ qua nếu có 'from')"),
-        from_: Optional[str] = Query(None, alias="from", description="ISO 8601, ví dụ 2026-10-26T08:00:00+07:00"),
-        to: Optional[str] = Query(None, description="ISO 8601; mặc định là bây giờ"),
-        device_id: Optional[str] = None,
-    ):
-        server_now = now(request)
-        end = _parse_time(to, "to") if to else server_now
-        if from_:
-            start = _parse_time(from_, "from")
-        else:
-            match = RANGE_RE.match(range_)
-            if not match:
-                raise HTTPException(400, "Tham số 'range' phải có dạng số + m/h/d, ví dụ 1h, 24h")
-            start = end - timedelta(**{RANGE_UNITS[match.group(2)]: int(match.group(1))})
-        if start >= end:
-            raise HTTPException(400, "'from' phải trước 'to'")
-
-        sql = "SELECT * FROM measurements WHERE received_at >= ? AND received_at <= ?"
-        params: list = [db.to_iso(start), db.to_iso(end)]
+    def get_history(request: Request, range_: str = RANGE_Q, from_: Optional[str] = FROM_Q,
+                    to: Optional[str] = TO_Q, source: str = SOURCE_Q,
+                    device_id: Optional[str] = None):
+        start, end = _window(now(request), range_, from_, to)
+        src_sql, src_args = _source_sql(source)
+        sql = "SELECT * FROM measurements WHERE received_at >= ? AND received_at <= ?" + src_sql
+        params: list = [db.to_iso(start), db.to_iso(end), *src_args]
         if device_id:
             sql += " AND device_id = ?"
             params.append(device_id)
@@ -249,6 +250,7 @@ def create_app(db_path: Optional[Path] = None, frontend_dir: Optional[Path] = No
         return {
             "from": db.to_iso(start),
             "to": db.to_iso(end),
+            "source": source,
             "sample_period_s": config.SAMPLE_PERIOD_S,
             "gap_threshold_s": config.GAP_THRESHOLD_S,
             "count": len(items),
@@ -283,7 +285,108 @@ def create_app(db_path: Optional[Path] = None, frontend_dir: Optional[Path] = No
     def get_demo(request: Request, device_id: Optional[str] = None):
         return _demo_state(request.app, now(request), device_id)
 
-    # TODO tuần 2: PUT /api/settings, GET /api/alerts; tuần 3: GET /api/export.csv
+    # --------------------------------------------------------- settings (PUT)
+    @app.put("/api/settings", tags=["website"])
+    def put_settings(body: SettingsUpdate, request: Request):
+        problems = body.problems()
+        if problems:
+            raise HTTPException(422, problems)
+        with db.session(request.app.state.db_path) as conn:
+            cur = db.current_settings(conn)
+            new = body.model_dump()
+            changed = any(cur[k] != v for k, v in new.items())
+            if changed:
+                conn.execute(
+                    """INSERT INTO settings (version, temp_high, temp_recover, hum_high,
+                                             hum_recover, lux_low, lux_recover,
+                                             light_alert_enabled, confirm_samples, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (cur["version"] + 1, new["temp_high"], new["temp_recover"], new["hum_high"],
+                     new["hum_recover"], new["lux_low"], new["lux_recover"],
+                     int(new["light_alert_enabled"]), cur["confirm_samples"],
+                     db.to_iso(now(request))))
+            settings = db.current_settings(conn)
+            applied = conn.execute(
+                "SELECT applied_config_version FROM devices ORDER BY last_seen_at DESC LIMIT 1"
+            ).fetchone()
+        settings["applied_version"] = applied[0] if applied else None
+        settings["changed"] = changed
+        return settings
+
+    # ----------------------------------------------------------------- alerts
+    @app.get("/api/alerts", tags=["website"])
+    def get_alerts(request: Request, range_: str = Query("24h", alias="range"),
+                   from_: Optional[str] = FROM_Q, to: Optional[str] = TO_Q,
+                   source: str = SOURCE_Q, status: Optional[str] = None,
+                   device_id: Optional[str] = None):
+        server_now = now(request)
+        start, end = _window(server_now, range_, from_, to)
+        src_sql, src_args = _source_sql(source)
+        # Sự kiện giao với khoảng thời gian: bắt đầu trước 'to' và (chưa kết thúc hoặc kết thúc sau 'from')
+        sql = ("SELECT * FROM alerts WHERE started_at <= ? AND (ended_at IS NULL OR ended_at >= ?)"
+               + src_sql)
+        params: list = [db.to_iso(end), db.to_iso(start), *src_args]
+        if status:
+            if status not in ("open", "unknown", "closed"):
+                raise HTTPException(400, "Tham số 'status' phải là open, unknown hoặc closed")
+            sql += " AND status = ?"
+            params.append(status)
+        if device_id:
+            sql += " AND device_id = ?"
+            params.append(device_id)
+        sql += " ORDER BY started_at DESC LIMIT 1000"
+        with db.session(request.app.state.db_path) as conn:
+            rows = conn.execute(sql, params).fetchall()
+        items = [_alert_out(r, server_now) for r in rows]
+        return {"from": db.to_iso(start), "to": db.to_iso(end), "source": source,
+                "count": len(items), "items": items}
+
+    # ------------------------------------------------------------- export CSV
+    CSV_COLUMNS = ["received_at_utc", "received_at_vn", "device_id", "boot_id", "seq",
+                   "uptime_ms", "source", "temperature", "humidity", "lux", "dht22_status",
+                   "bh1750_status", "temp_flag", "hum_flag", "lux_flag", "flag_reason"]
+
+    @app.get("/api/export.csv", tags=["website"])
+    def export_csv(request: Request, range_: str = Query("24h", alias="range"),
+                   from_: Optional[str] = FROM_Q, to: Optional[str] = TO_Q,
+                   source: str = SOURCE_Q, device_id: Optional[str] = None):
+        start, end = _window(now(request), range_, from_, to)
+        src_sql, src_args = _source_sql(source)
+        sql = ("SELECT * FROM measurements WHERE received_at >= ? AND received_at <= ?" + src_sql)
+        params: list = [db.to_iso(start), db.to_iso(end), *src_args]
+        if device_id:
+            sql += " AND device_id = ?"
+            params.append(device_id)
+        sql += " ORDER BY received_at, id"
+        db_path = request.app.state.db_path
+        vn = timedelta(hours=7)
+
+        def rows():
+            buf = io.StringIO()
+            writer = csv.writer(buf)
+            yield "\ufeff"  # BOM để Excel đọc đúng tiếng Việt
+            writer.writerow(CSV_COLUMNS)
+            conn = db.connect(db_path)
+            try:
+                for r in conn.execute(sql, params):
+                    local = (db.from_iso(r["received_at"]) + vn).strftime("%Y-%m-%d %H:%M:%S")
+                    writer.writerow([r["received_at"], local, r["device_id"], r["boot_id"],
+                                     r["seq"], r["uptime_ms"], r["source"], r["temperature"],
+                                     r["humidity"], r["lux"], r["dht22_status"],
+                                     r["bh1750_status"], r["temp_flag"], r["hum_flag"],
+                                     r["lux_flag"], r["flag_reason"] or ""])
+                    if buf.tell() > 64_000:
+                        yield buf.getvalue()
+                        buf.seek(0)
+                        buf.truncate()
+                yield buf.getvalue()
+            finally:
+                conn.close()
+
+        fmt = "%Y%m%d-%H%M"
+        name = f"du_lieu_{source}_{(start + vn).strftime(fmt)}_{(end + vn).strftime(fmt)}.csv"
+        return StreamingResponse(rows(), media_type="text/csv; charset=utf-8",
+                                 headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
     # Website tĩnh của TV3 (frontend/) phục vụ cùng cổng – đặt SAU các route /api
     if frontend_dir.is_dir():

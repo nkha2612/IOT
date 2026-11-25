@@ -32,6 +32,25 @@ TEMP_RANGE = (-40.0, 80.0)
 HUM_RANGE = (0.0, 100.0)
 LUX_RANGE = (0.0, 65535.0)
 
+# Nguồn dữ liệu của mỗi mẫu đo. Chỉ "real" được dùng làm mốc cho thuật toán bất thường,
+# đánh giá và thống kê; "demo" (chế độ demo trên website) và "sim" (lệnh giả lập Serial của
+# firmware, bộ kiểm thử giả lập) được lưu riêng để xem lại nhưng không trộn vào số liệu thật.
+SOURCES = ("real", "demo", "sim")
+
+# Bước 2 – đột biến: trung vị trượt + MAD trên các mẫu hợp lệ TRƯỚC mẫu hiện tại
+MAD_K = 3.0                 # ngưỡng = max(MAD_K × 1,4826 × MAD, delta)
+MAD_WINDOW = 60             # tối đa 60 mẫu gần nhất (~5 phút)
+MAD_MIN_SAMPLES = 20        # ít hơn thì chưa xét
+MAD_MAX_AGE_S = 15 * 60     # chỉ lấy mẫu trong 15 phút gần nhất (sau khi mất kết nối lâu thì làm lại mốc)
+SPIKE_DELTA = {"temperature": 0.5, "humidity": 2.0, "lux": 20.0}
+# Lệch cùng chiều từ LEVEL_SHIFT_RUN mẫu liên tiếp trở lên là THAY ĐỔI THẬT (bật đèn, mở cửa…),
+# không phải đột biến: bỏ cờ "spike" của các mẫu trước đó trong chuỗi.
+LEVEL_SHIFT_RUN = 3
+
+# Bước 3 – nghi kẹt: cùng cảm biến lặp nguyên giá trị trong STUCK_MINUTES phút
+STUCK_MINUTES = 20
+STUCK_LUX_MIN = 1.0         # phòng tối 0 lux là bình thường, không coi là kẹt
+
 # Ngưỡng demo mặc định (mục 6 tài liệu chốt đề tài) – phiên bản cấu hình số 1
 DEFAULT_SETTINGS = {
     "temp_high": 30.0,

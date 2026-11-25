@@ -1,4 +1,6 @@
-"""Kết nối và khởi tạo cơ sở dữ liệu SQLite (4 bảng: devices, measurements, settings, alerts).
+"""Kết nối, khởi tạo và nâng cấp cơ sở dữ liệu SQLite.
+
+Bảng: devices, measurements, settings, alerts, alert_channels.
 
 Quy ước thời gian: mọi cột *_at lưu UTC dạng chuỗi cố định độ dài
 'YYYY-MM-DDTHH:MM:SS.mmmZ' để so sánh/sắp xếp chuỗi đúng thứ tự thời gian.
@@ -11,7 +13,7 @@ from pathlib import Path
 
 from . import config
 
-SCHEMA = """
+TABLES = """
 CREATE TABLE IF NOT EXISTS devices (
     device_id               TEXT PRIMARY KEY,
     first_seen_at           TEXT NOT NULL,
@@ -37,10 +39,9 @@ CREATE TABLE IF NOT EXISTS measurements (
     hum_flag      TEXT    NOT NULL,
     lux_flag      TEXT    NOT NULL,
     flag_reason   TEXT,
+    source        TEXT    NOT NULL DEFAULT 'real',  -- real | demo | sim
     UNIQUE (device_id, boot_id, seq)  -- chống ghi trùng khi ESP32 gửi lại
 );
-CREATE INDEX IF NOT EXISTS idx_measurements_device_time
-    ON measurements (device_id, received_at);
 
 -- Mỗi lần lưu ngưỡng mới thêm một dòng với version tăng dần; bản dùng = version lớn nhất
 CREATE TABLE IF NOT EXISTS settings (
@@ -56,20 +57,59 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at           TEXT    NOT NULL
 );
 
--- Sự kiện cảnh báo (logic xử lý viết ở tuần 2)
+-- Sự kiện cảnh báo: một dòng cho mỗi lần bật, cập nhật tại chỗ tới khi hồi phục
 CREATE TABLE IF NOT EXISTS alerts (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     device_id    TEXT NOT NULL,
     type         TEXT NOT NULL,       -- temp_high | hum_high | lux_low
-    threshold    REAL NOT NULL,
+    threshold    REAL NOT NULL,       -- ngưỡng bật lúc mở sự kiện
     start_value  REAL,
-    peak_value   REAL,
+    peak_value   REAL,                -- cao nhất (nhiệt, ẩm) hoặc thấp nhất (ánh sáng)
     started_at   TEXT NOT NULL,
     ended_at     TEXT,
-    status       TEXT NOT NULL        -- open | closed | unknown
+    status       TEXT NOT NULL,       -- open | unknown | closed
+    source       TEXT NOT NULL DEFAULT 'real',
+    end_value    REAL,
+    end_reason   TEXT,                -- recovered | light_disabled | source_changed
+    updated_at   TEXT
 );
+
+-- Trạng thái bộ máy cảnh báo của từng loại (giống AlertChannel trong firmware/alerts.cpp)
+CREATE TABLE IF NOT EXISTS alert_channels (
+    device_id         TEXT    NOT NULL,
+    source            TEXT    NOT NULL,
+    kind              TEXT    NOT NULL,
+    state             TEXT    NOT NULL,   -- normal | active | unknown
+    on_count          INTEGER NOT NULL,
+    off_count         INTEGER NOT NULL,
+    alert_id          INTEGER,
+    settings_version  INTEGER,
+    PRIMARY KEY (device_id, source, kind)
+);
+"""
+
+INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_measurements_device_time
+    ON measurements (device_id, received_at);
+CREATE INDEX IF NOT EXISTS idx_measurements_source_time
+    ON measurements (device_id, source, received_at);
+CREATE INDEX IF NOT EXISTS idx_measurements_time ON measurements (received_at);
 CREATE INDEX IF NOT EXISTS idx_alerts_time ON alerts (started_at);
 """
+
+# Cột thêm sau bản v1: database tạo từ trước được bổ sung khi khởi động (giữ nguyên dữ liệu cũ)
+MIGRATIONS = {
+    "measurements": [("source", "TEXT NOT NULL DEFAULT 'real'")],
+    "alerts": [
+        ("source", "TEXT NOT NULL DEFAULT 'real'"),
+        ("end_value", "REAL"),
+        ("end_reason", "TEXT"),
+        ("updated_at", "TEXT"),
+    ],
+}
+
+# Cờ chất lượng mà giá trị vẫn là số đo hợp lệ (dùng cho cảnh báo và làm mốc thuật toán)
+VALID_FLAGS = ("ok", "spike", "stuck")
 
 
 def utc_now() -> datetime:
@@ -117,12 +157,26 @@ def session(db_path: Path):
         conn.close()
 
 
+def migrate(conn: sqlite3.Connection) -> list[str]:
+    """Thêm các cột còn thiếu vào database cũ. Trả về danh sách cột đã thêm."""
+    added = []
+    for table, columns in MIGRATIONS.items():
+        existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        for name, decl in columns:
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+                added.append(f"{table}.{name}")
+    return added
+
+
 def init_db(db_path: Path) -> None:
-    """Tạo bảng nếu chưa có và nạp cấu hình ngưỡng mặc định (version 1)."""
+    """Tạo bảng nếu chưa có, nâng cấp database cũ, nạp cấu hình mặc định (version 1)."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with session(db_path) as conn:
         conn.execute("PRAGMA journal_mode = WAL")  # cho phép đọc trong lúc đang ghi
-        conn.executescript(SCHEMA)
+        conn.executescript(TABLES)
+        migrate(conn)
+        conn.executescript(INDEXES)
         has_settings = conn.execute("SELECT 1 FROM settings LIMIT 1").fetchone()
         if not has_settings:
             s = config.DEFAULT_SETTINGS
