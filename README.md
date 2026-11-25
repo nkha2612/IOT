@@ -7,7 +7,7 @@ ESP32 đo nhiệt độ, độ ẩm (DHT22) và độ rọi (BH1750) mỗi 5 gi�
 | `firmware/` | Code Arduino cho ESP32 | TV1 |
 | `backend/` | FastAPI, SQLite, cảnh báo, thuật toán bất thường, test | TV2 |
 | `frontend/` | Website (HTML/CSS/JS + Chart.js lưu cục bộ) | TV3 |
-| `tools/` | `fake_device.py` – thiết bị giả lập; script đánh giá | TV2 |
+| `tools/` | Thiết bị giả lập, sao lưu, thống kê, đánh giá thuật toán, tính lại dữ liệu | TV2 |
 | `data/` | Database và dữ liệu xuất (không đẩy `.db` lên repo) | TV2 |
 | `docs/` | `api.md`, JSON mẫu, sơ đồ mạch, biên bản kiểm thử | Cả nhóm |
 
@@ -42,6 +42,22 @@ python3 tools/fake_device.py --dup-rate 0.1        # thử gửi lại gói trù
 python3 tools/fake_device.py --help                # xem tất cả tùy chọn
 ```
 
+Số đo của thiết bị giả lập được gắn nguồn `sim`, không lẫn vào dữ liệu thật. Trên website, tích **"Hiện cả dữ liệu demo/giả lập"** để thấy chúng trên biểu đồ.
+
+## Công cụ dữ liệu (thư mục `tools/`)
+
+Chạy từ thư mục gốc repo, trong venv đã cài `backend/requirements.txt`. Mặc định dùng `data/room_monitor.db`; đổi bằng `--db`.
+
+| Lệnh | Dùng khi |
+| --- | --- |
+| `python3 tools/sao_luu.py` | Mỗi ngày khi đang thu dữ liệu: sao lưu an toàn vào `data/backup/` (backend vẫn chạy được) |
+| `python3 tools/thong_ke.py --gio 2 --out docs/thong_ke_chay_ben.md` | Sau phiên chạy bền: số mẫu, mất gói, khoảng trống, tỷ lệ lỗi, cờ, cảnh báo |
+| `python3 tools/danh_gia.py` | Khi có từ 2 giờ (tốt nhất 1–3 ngày) dữ liệu thật: tạo bộ kiểm thử có nhãn, chọn tham số, tính precision/recall/F1 → `data/danh_gia/ket_qua.md` |
+| `python3 tools/danh_dau_nguon.py --from … --to … --nguon demo` | Đánh dấu lại đoạn demo/giả lập lưu trước v1.2 (thêm `--ghi` để ghi thật) |
+| `python3 tools/tinh_lai.py --thay-the` | **Dừng backend trước.** Tính lại cờ bất thường và sự kiện cảnh báo cho cả database (sau khi nâng cấp, đánh dấu lại nguồn hoặc đổi tham số) |
+
+Tham số thuật toán (đột biến, nghi kẹt) ở `backend/app/config.py`; mô tả ở mục 5 `docs/api.md`.
+
 Kịch bản có sẵn: `normal`, `hot`, `humid`, `dark`, `spike`, `stuck`.
 
 ## Chạy kiểm thử
@@ -65,10 +81,15 @@ pytest -q
 6. Giữ laptop không ngủ khi demo (macOS: `caffeinate -dimsu` trong một terminal riêng) và cố định IP (đặt giữ chỗ DHCP trên router/hotspot).
 7. TV1 ghi IP này vào cấu hình firmware: `http://<IP-laptop>:8000/api/measurements`.
 
+## Website
+
+Mở `http://<IP-laptop>:8000`. Gồm: trạng thái thiết bị, cảnh báo đang mở, 3 thẻ số đo, cảnh báo tại thiết bị và chế độ demo, biểu đồ lịch sử (1 giờ / 24 giờ / tùy chọn), dữ liệu bất thường, lịch sử cảnh báo, cấu hình ngưỡng, nút xuất CSV. Trang `kiem-tra.html` là trang kiểm tra nhanh API.
+
 ## Quy ước làm việc với Git
 
-- `main`: bản ổn định để nộp/demo. `dev`: nhánh tích hợp.
-- Mỗi người làm trên nhánh riêng: `fw/<tên-việc>`, `be/<tên-việc>`, `fe/<tên-việc>`, rồi tạo Pull Request vào `dev`.
-- Tích hợp ít nhất 2 lần/tuần; chỉ merge `dev` → `main` sau khi chạy đủ mạch + backend + website.
+- `main`: bản ổn định để nộp/demo. `dev`: nhánh tích hợp, luôn chạy được.
+- Nhánh riêng: TV1 `fw`, TV2 `be`, TV3 `fe`. **Trước khi bắt đầu mỗi buổi**: `git checkout fw && git pull && git merge origin/dev` (thay `fw` bằng nhánh của mình) để luôn làm trên bản mới nhất.
+- Xong một việc: `git push`, rồi tạo Pull Request từ nhánh của mình vào `dev`; người khác xem rồi merge.
+- Chỉ merge `dev` → `main` sau buổi tích hợp chạy đủ mạch + backend + website.
 - Không commit `secrets.h` (mật khẩu Wi-Fi) và file `.db`.
 - Thay đổi API: TV2 sửa `docs/api.md` và báo nhóm trước.

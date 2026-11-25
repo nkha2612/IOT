@@ -21,3 +21,6 @@ firmware/**/build/
 .DS_Store
 .vscode/
 .idea/
+
+# Gói cập nhật tạm (xoá sau khi chạy xong script đồng bộ)
+_claude_update/
