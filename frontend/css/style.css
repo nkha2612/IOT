@@ -318,3 +318,277 @@ body {
   opacity: 0.5;
   cursor: default;
 }
+/* ======================================================================
+   Phần thêm v1.2: mục lục, nhãn nguồn, cảnh báo đang mở, biểu đồ,
+   bảng bất thường, lịch sử cảnh báo, cấu hình ngưỡng.
+   Dùng lại các biến màu ở :root để khớp chế độ sáng/tối.
+   ====================================================================== */
+
+#jump {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  width: min(100% - 2rem, 64rem);
+  margin: 0.75rem auto 0;
+  font-size: 0.95rem;
+}
+
+#jump a {
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 1px solid var(--line);
+}
+
+#jump a:hover { color: var(--ink); border-color: var(--ink); }
+
+html { scroll-behavior: smooth; }
+section[id] { scroll-margin-top: 4rem; }
+
+#source-badge {
+  grid-column: 2;
+  justify-self: start;
+  padding: 0.15rem 0.6rem;
+  border: 2px dashed var(--fault);
+  border-radius: 10px;
+  color: var(--fault);
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.tag {
+  display: inline-block;
+  margin-right: 0.35rem;
+  padding: 0 0.4rem;
+  border: 1px dashed var(--fault);
+  border-radius: 6px;
+  color: var(--fault);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  vertical-align: 0.1em;
+}
+
+/* ---------- Cảnh báo đang mở ---------- */
+
+#open-alerts {
+  width: min(100% - 2rem, 64rem);
+  margin: 1rem auto 0;
+  padding: 0.75rem 1.25rem;
+  border-radius: 12px;
+  background: var(--banner-bg);
+  color: var(--banner-ink);
+}
+
+#open-alerts h2 { margin: 0 0 0.25rem; font-size: 1.1rem; }
+#open-alerts ul { margin: 0; padding-left: 1.2rem; }
+#open-alerts li { font-weight: 600; }
+#open-alerts li.unknown { font-style: italic; }
+#open-alerts .tag { border-color: currentColor; color: inherit; }
+
+/* ---------- Khung chung cho các mục dưới ---------- */
+
+.panel {
+  width: min(100% - 2rem, 64rem);
+  margin: 1rem auto 0;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.panel > h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.muted { color: var(--muted); font-size: 0.95rem; }
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.segmented label {
+  padding: 0.4rem 0.8rem;
+  cursor: pointer;
+  border-left: 1px solid var(--line);
+}
+
+.segmented label:first-child { border-left: 0; }
+.segmented input { position: absolute; opacity: 0; pointer-events: none; }
+.segmented label:has(input:checked) { background: var(--ink); color: var(--surface); font-weight: 700; }
+.segmented label:has(input:focus-visible) { outline: 2px solid var(--humidity); outline-offset: -2px; }
+
+#custom-range {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+#custom-range[hidden] { display: none; }
+
+.check { display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; }
+
+input[type="datetime-local"],
+input[type="number"] {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.95rem;
+}
+
+.panel button,
+.button {
+  display: inline-block;
+  padding: 0.45rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.panel button:hover,
+.button:hover { border-color: var(--ink); }
+
+.panel button[type="submit"] {
+  background: var(--ink);
+  color: var(--surface);
+  border-color: var(--ink);
+  font-weight: 700;
+}
+
+/* ---------- Biểu đồ ---------- */
+
+.charts { display: grid; gap: 1rem; margin-top: 0.5rem; }
+
+.chart {
+  margin: 0;
+  padding: 0.5rem 0.75rem 0.75rem;
+  border: 1px solid var(--line);
+  border-left: 6px solid var(--accent, var(--ink));
+  border-radius: 10px;
+}
+
+.chart[data-param="temperature"] { --accent: var(--temperature); }
+.chart[data-param="humidity"]    { --accent: var(--humidity); }
+.chart[data-param="lux"]         { --accent: var(--lux); }
+
+.chart figcaption { font-weight: 600; margin-bottom: 0.25rem; }
+.canvas-box { position: relative; height: 220px; }
+
+@media (min-width: 720px) {
+  .canvas-box { height: 240px; }
+}
+
+.legend-note { margin: 0.75rem 0 0; }
+
+/* ---------- Bảng ---------- */
+
+.chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.5rem 0; }
+
+.chip {
+  padding: 0.1rem 0.6rem;
+  border: 1px solid var(--fault);
+  border-radius: 999px;
+  color: var(--fault);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  max-height: 28rem;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+
+th, td {
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+td.num { white-space: nowrap; font-variant-numeric: tabular-nums; }
+td.empty { color: var(--muted); text-align: center; padding: 1rem; }
+td.flag { font-weight: 700; color: var(--fault); white-space: nowrap; }
+td.status { font-weight: 700; white-space: nowrap; }
+tr.alert-open td.status { color: var(--banner-bg); }
+tr.alert-unknown td.status { color: var(--fault); font-style: italic; }
+tr.alert-closed td.status { color: var(--online); }
+
+/* ---------- Cấu hình ngưỡng ---------- */
+
+#settings-form {
+  display: grid;
+  gap: 0.75rem;
+}
+
+#settings-form fieldset {
+  display: grid;
+  gap: 0.5rem 1rem;
+  margin: 0;
+  padding: 0.6rem 1rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+@media (min-width: 720px) {
+  #settings-form fieldset { grid-template-columns: 1fr 1fr; }
+  #settings-form .wide { grid-column: 1 / -1; }
+}
+
+#settings-form legend { font-weight: 600; padding: 0 0.3rem; }
+
+#settings-form label:not(.check) {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.95rem;
+  color: var(--muted);
+}
+
+#settings-form input[type="number"] { width: 100%; max-width: 12rem; }
+
+.errors {
+  margin: 0;
+  padding: 0.5rem 0.75rem 0.5rem 1.75rem;
+  border: 2px solid var(--banner-bg);
+  border-radius: 10px;
+  color: var(--banner-bg);
+  font-weight: 600;
+}
+
+.form-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+
+#settings-status { margin: 0; font-weight: 600; }
+#settings-status.ok { color: var(--online); }

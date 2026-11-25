@@ -9,10 +9,25 @@
 <body>
   <div id="server-banner" hidden>Mất kết nối máy chủ – đang hiển thị số liệu cũ</div>
 
+  <nav id="jump" aria-label="Các mục">
+    <a href="#device">Hiện tại</a>
+    <a href="#history">Biểu đồ</a>
+    <a href="#anomalies">Bất thường</a>
+    <a href="#alerts">Cảnh báo</a>
+    <a href="#settings">Cài đặt</a>
+  </nav>
+
   <section id="device">
     <span id="device-dot"></span>
     <strong id="device-status">Đang kết nối…</strong>
     <small id="device-seen"></small>
+    <span id="source-badge" hidden></span>
+  </section>
+
+  <!-- Sự kiện cảnh báo đang mở trên máy chủ (CN05) – js/app.js -->
+  <section id="open-alerts" aria-live="polite" hidden>
+    <h2>Đang cảnh báo</h2>
+    <ul></ul>
   </section>
 
   <section id="cards">
@@ -31,7 +46,7 @@
     </div>
     <details id="demo-panel" open>
       <summary>Kiểm tra tình huống (demo)</summary>
-      <p class="hint">ESP32 tự phát số đo của tình huống, mỗi mẫu 5 giây, qua đúng đường thật: cảnh báo, LED, còi, máy chủ và các thẻ phía trên. Về đo thật: bấm “Về đo thật” hoặc nút EN trên ESP32.</p>
+      <p class="hint">ESP32 tự phát số đo của tình huống, mỗi mẫu 5 giây, qua đúng đường thật: cảnh báo, LED, còi, máy chủ và các thẻ phía trên. Số đo demo được lưu riêng, không lẫn vào dữ liệu thật. Về đo thật: bấm “Về đo thật” hoặc nút EN trên ESP32.</p>
       <div id="demo-buttons"></div>
       <p id="demo-status" aria-live="polite">Đang tải…</p>
       <progress id="demo-progress" hidden></progress>
@@ -40,9 +55,90 @@
     </details>
   </section>
 
-  <!-- Tuần 2: biểu đồ, cảnh báo, cài đặt ngưỡng -->
+  <!-- Lịch sử (CN03), dữ liệu bất thường (CN06), sự kiện cảnh báo (CN05), xuất CSV (CN07) – js/history.js -->
+  <section id="history" class="panel">
+    <h2>Biểu đồ lịch sử</h2>
+    <form id="range-form" class="toolbar">
+      <div class="segmented" role="radiogroup" aria-label="Khoảng thời gian">
+        <label><input type="radio" name="range" value="1h" checked> 1 giờ</label>
+        <label><input type="radio" name="range" value="24h"> 24 giờ</label>
+        <label><input type="radio" name="range" value="custom"> Tùy chọn</label>
+      </div>
+      <div id="custom-range" hidden>
+        <label>Từ <input type="datetime-local" id="range-from"></label>
+        <label>Đến <input type="datetime-local" id="range-to"></label>
+        <button type="submit">Xem</button>
+      </div>
+      <label class="check"><input type="checkbox" id="show-all"> Hiện cả dữ liệu demo/giả lập</label>
+      <a id="export-csv" class="button" href="/api/export.csv" download>Xuất CSV</a>
+    </form>
+    <p id="history-info" class="muted" aria-live="polite">Đang tải…</p>
+    <div class="charts">
+      <figure class="chart" data-param="temperature"><figcaption>Nhiệt độ (°C)</figcaption><div class="canvas-box"><canvas></canvas></div></figure>
+      <figure class="chart" data-param="humidity"><figcaption>Độ ẩm (%RH)</figcaption><div class="canvas-box"><canvas></canvas></div></figure>
+      <figure class="chart" data-param="lux"><figcaption>Độ rọi (lux)</figcaption><div class="canvas-box"><canvas></canvas></div></figure>
+    </div>
+    <p class="muted legend-note">Trục thời gian theo thời điểm máy chủ nhận, giờ Việt Nam. Đường bị ngắt là khoảng mất dữ liệu (quá 15 giây không có mẫu). Vòng tròn đỏ là mẫu bị gắn cờ đột biến hoặc nghi kẹt (xem bảng bên dưới).</p>
+  </section>
 
+  <section id="anomalies" class="panel">
+    <h2>Dữ liệu bất thường</h2>
+    <p class="muted">Cùng khoảng thời gian với biểu đồ. Các mẫu liền nhau cùng một lỗi được gộp thành một dòng.</p>
+    <div id="anomaly-summary" class="chips"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Thời điểm</th><th>Thông số</th><th>Giá trị</th><th>Loại</th><th>Lý do</th></tr></thead>
+        <tbody id="anomaly-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="alerts" class="panel">
+    <h2>Lịch sử cảnh báo</h2>
+    <p class="muted">Mỗi lần vượt ngưỡng 3 mẫu liên tiếp là một sự kiện, kết thúc khi 3 mẫu liên tiếp qua ngưỡng hồi phục.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Loại</th><th>Bắt đầu</th><th>Kết thúc</th><th>Kéo dài</th><th>Đầu / đỉnh</th><th>Ngưỡng</th><th>Trạng thái</th></tr></thead>
+        <tbody id="alert-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Cấu hình ngưỡng (CN04) – js/settings.js -->
+  <section id="settings" class="panel">
+    <h2>Cấu hình ngưỡng</h2>
+    <form id="settings-form" novalidate>
+      <fieldset>
+        <legend>Nhiệt độ (°C)</legend>
+        <label>Cảnh báo khi cao hơn <input type="number" name="temp_high" step="0.1" min="-40" max="80" required></label>
+        <label>Hồi phục khi thấp hơn <input type="number" name="temp_recover" step="0.1" min="-40" max="80" required></label>
+      </fieldset>
+      <fieldset>
+        <legend>Độ ẩm (%RH)</legend>
+        <label>Cảnh báo khi cao hơn <input type="number" name="hum_high" step="0.1" min="0" max="100" required></label>
+        <label>Hồi phục khi thấp hơn <input type="number" name="hum_recover" step="0.1" min="0" max="100" required></label>
+      </fieldset>
+      <fieldset>
+        <legend>Ánh sáng (lux)</legend>
+        <label>Cảnh báo khi thấp hơn <input type="number" name="lux_low" step="1" min="0" max="65535" required></label>
+        <label>Hồi phục khi cao hơn <input type="number" name="lux_recover" step="1" min="0" max="65535" required></label>
+        <label class="check wide"><input type="checkbox" name="light_alert_enabled"> Phòng đang sử dụng (chỉ khi bật mới xét cảnh báo ánh sáng)</label>
+      </fieldset>
+      <p class="muted">Cần 3 mẫu liên tiếp (khoảng 15 giây) để bật hoặc tắt một cảnh báo. Khoảng giữa hai ngưỡng giúp cảnh báo không bật/tắt liên tục.</p>
+      <ul id="settings-errors" class="errors" hidden></ul>
+      <div class="form-actions">
+        <button type="submit">Lưu ngưỡng</button>
+        <button type="button" id="settings-reset">Hoàn tác</button>
+      </div>
+      <p id="settings-status" aria-live="polite"></p>
+    </form>
+  </section>
+
+  <script src="vendor/chart.umd.min.js"></script>
+  <script src="vendor/chartjs-adapter-date-fns.bundle.min.js"></script>
   <script src="js/app.js"></script>
   <script src="js/demo.js"></script>
+  <script src="js/history.js"></script>
+  <script src="js/settings.js"></script>
 </body>
 </html>

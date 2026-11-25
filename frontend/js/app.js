@@ -11,7 +11,33 @@ const FLAG_LABEL = {
 };
 
 const fmtTime = (iso) => new Date(iso).toLocaleTimeString("vi-VN", { timeZone: TZ });
+const SOURCE_LABEL = { demo: "DEMO", sim: "GIẢ LẬP" };
+const ALERT_UNIT = { temp_high: "°C", hum_high: "%RH", lux_low: "lux" };
 let lastReceivedAt = null;
+
+// Sự kiện cảnh báo đang mở trên máy chủ (CN05): luôn thấy ở đầu trang
+function renderOpenAlerts(list) {
+  const box = document.getElementById("open-alerts");
+  const ul = box.querySelector("ul");
+  ul.replaceChildren();
+  for (const a of list || []) {
+    const li = document.createElement("li");
+    li.className = a.status === "unknown" ? "unknown" : "active";
+    const unit = ALERT_UNIT[a.type] || "";
+    const state = a.status === "unknown"
+      ? "chưa xác định (cảm biến lỗi trong lúc cảnh báo)"
+      : `đỉnh ${a.peak_value} ${unit}, ngưỡng ${a.threshold} ${unit}`;
+    li.textContent = `${a.label} từ ${fmtTime(a.started_at)} – ${state}`;
+    if (SOURCE_LABEL[a.source]) {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = SOURCE_LABEL[a.source];
+      li.prepend(tag);
+    }
+    ul.appendChild(li);
+  }
+  box.hidden = ul.children.length === 0;
+}
 
 function renderCard(param, value, flag, reason) {
   const card = document.querySelector(`.card[data-param="${param}"]`);
@@ -30,6 +56,7 @@ function render(data) {
   const seen = document.getElementById("device-seen");
   const dot = document.getElementById("device-dot");
 
+  renderOpenAlerts(data.open_alerts);
   if (!d) {
     status.textContent = "Chưa có thiết bị nào gửi dữ liệu";
     return;
@@ -38,6 +65,11 @@ function render(data) {
   dot.className = d.online ? "online" : "offline";
   seen.textContent = `Nhận lần cuối ${fmtTime(d.last_seen_at)} (thời điểm server nhận)`;
   document.getElementById("cards").classList.toggle("is-stale", !d.online);
+
+  const badge = document.getElementById("source-badge");
+  const label = m && SOURCE_LABEL[m.source];
+  badge.hidden = !label;
+  badge.textContent = label ? `Đang hiển thị số đo ${label} – không phải đo thật` : "";
 
   if (m) {
     for (const p of ["temperature", "humidity", "lux"]) {
