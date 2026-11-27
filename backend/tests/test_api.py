@@ -151,3 +151,16 @@ def test_settings_defaults(client):
     assert (s["hum_high"], s["hum_recover"]) == (75, 72)
     assert (s["lux_low"], s["lux_recover"]) == (300, 350)
     assert s["light_alert_enabled"] is False
+
+
+def test_concurrent_resend_of_same_packet_never_500(client):
+    """TV1 26/11: ESP32 hết thời gian chờ, gửi lại đúng gói trong lúc lần đầu còn đang xử lý
+    -> trước đây HTTP 500 "UNIQUE constraint failed". Giờ mọi lần đều 200, chỉ lưu một bản."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    payload = make_payload(seq=42)
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        results = list(pool.map(lambda _: client.post("/api/measurements", json=payload), range(32)))
+    assert [r.status_code for r in results] == [200] * 32
+    assert sum(not r.json()["duplicate"] for r in results) == 1
+    assert client.get("/api/history").json()["count"] == 1

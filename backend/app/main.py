@@ -168,6 +168,9 @@ def create_app(db_path: Optional[Path] = None, frontend_dir: Optional[Path] = No
     def post_measurement(m: MeasurementIn, request: Request):
         received_at = now(request)
         with db.session(request.app.state.db_path) as conn:
+            # Khoá ghi ngay từ đầu: các gói được xử lý lần lượt, kể cả khi ESP32 gửi lại một gói
+            # trong lúc lần gửi đầu còn đang xử lý (chống trùng + giữ đúng bộ đếm cảnh báo).
+            conn.execute("BEGIN IMMEDIATE")
             res = ingest(conn, m, received_at)
         duplicate, settings = res["duplicate"], res["settings"]
 

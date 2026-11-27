@@ -28,8 +28,10 @@ def ingest(conn, m, received_at: datetime) -> dict:
             clears = anomaly.check_spikes(conn, m.device_id, at, values, result)
             anomaly.check_stuck(conn, m.device_id, at, values, result)
 
-        conn.execute(
-            """INSERT INTO measurements
+        # OR IGNORE: lớp an toàn thứ hai nếu hai yêu cầu cùng gói vẫn lọt qua kiểm tra ở trên
+        # (lỗi HTTP 500 "UNIQUE constraint failed" TV1 gặp ngày 26/11 khi ESP32 gửi lại gói).
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO measurements
                (device_id, boot_id, seq, uptime_ms, received_at, temperature, humidity, lux,
                 dht22_status, bh1750_status, temp_flag, hum_flag, lux_flag, flag_reason, source)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -37,7 +39,9 @@ def ingest(conn, m, received_at: datetime) -> dict:
              m.sensor_status.dht22, m.sensor_status.bh1750,
              result["temperature"][0], result["humidity"][0], result["lux"][0],
              join_reasons(result), source))
+        duplicate = cur.rowcount == 0
 
+    if not duplicate:
         # Thay đổi thật (nhiều mẫu cùng lệch): bỏ cờ đột biến đã gắn cho các mẫu trước
         for row_id, p in clears:
             old = conn.execute("SELECT flag_reason FROM measurements WHERE id = ?",
