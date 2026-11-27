@@ -38,7 +38,8 @@ LUX_RANGE = (0.0, 65535.0)
 SOURCES = ("real", "demo", "sim")
 
 # Bước 2 – đột biến: trung vị trượt + MAD trên các mẫu hợp lệ TRƯỚC mẫu hiện tại
-MAD_K = 3.0                 # ngưỡng = max(MAD_K × 1,4826 × MAD, delta)
+MAD_K = 5.0                 # ngưỡng = max(MAD_K × 1,4826 × MAD, delta); chọn bằng tools/danh_gia.py
+                            # trên dữ liệu thật 25–26/11 (phần đầu; 5/6 lần chạy chọn 5,0)
 MAD_WINDOW = 60             # tối đa 60 mẫu gần nhất (~5 phút)
 MAD_MIN_SAMPLES = 20        # ít hơn thì chưa xét
 MAD_MAX_AGE_S = 15 * 60     # chỉ lấy mẫu trong 15 phút gần nhất (sau khi mất kết nối lâu thì làm lại mốc)
@@ -46,6 +47,14 @@ SPIKE_DELTA = {"temperature": 0.5, "humidity": 2.0, "lux": 20.0}
 # Lệch cùng chiều từ LEVEL_SHIFT_RUN mẫu liên tiếp trở lên là THAY ĐỔI THẬT (bật đèn, mở cửa…),
 # không phải đột biến: bỏ cờ "spike" của các mẫu trước đó trong chuỗi.
 LEVEL_SHIFT_RUN = 3
+# Đột biến phải NHẢY XA so với mẫu bình thường gần nhất trước nó (cũng quá ngưỡng). Thêm sau khi
+# chạy trên dữ liệu thật 25–26/11: nhiệt độ/độ ẩm trôi chậm (0,1 mỗi mẫu) vượt ngưỡng so với
+# trung vị 5 phút trước và bị gắn nhầm. Cùng lúc, "thay đổi thật" phải là các mẫu ở cùng một
+# mức mới. Đặt False để quay về đúng thuật toán v1.2 (chỉ so với trung vị) khi so sánh.
+SPIKE_JUMP_CHECK = True
+# (v1.3) Mẫu bình thường để so phải trong vòng 30 giây; vừa mất kết nối lâu hơn thì không kết luận
+# đột biến (số đo có thể đã thay đổi thật trong lúc mất dữ liệu).
+SPIKE_REF_MAX_AGE_S = 30
 
 # Bước 3 – nghi kẹt: cùng cảm biến lặp nguyên giá trị trong STUCK_MINUTES phút
 STUCK_MINUTES = 20

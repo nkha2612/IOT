@@ -1,4 +1,4 @@
-# Tài liệu API – v1.2
+# Tài liệu API – v1.3
 
 Người giữ tài liệu: **TV2**. Mọi thay đổi phải được báo trong nhóm trước khi merge. Lịch sử thay đổi ở cuối file.
 
@@ -254,7 +254,14 @@ Mỗi thông số có cờ riêng, nên một cảm biến lỗi không làm m�
 
 `flag_reason` là chuỗi giải thích bằng tiếng Việt để hiển thị trên website (CN06), mỗi thông số một đoạn, cách nhau bằng `; `.
 
-**Bước 2 – đột biến** (chỉ trên dữ liệu thật, từng thông số): lấy tối đa 60 giá trị hợp lệ trước mẫu hiện tại trong 15 phút gần nhất (cần ít nhất 20), tính trung vị *m* và MAD. Ngưỡng = max(3 × 1,4826 × MAD, δ) với δ = 0,5 °C; 2 %RH; 20 lux. Lệch quá ngưỡng là ứng viên. Nếu **3 mẫu liên tiếp cùng lệch một chiều** thì đó là thay đổi thật (bật đèn, mở cửa) nên không gắn cờ, và cờ của 2 mẫu trước được gỡ. Vì vậy cờ `spike` chỉ còn ở đột biến 1–2 mẫu. Tham số trong `backend/app/config.py`; chọn lại bằng `tools/danh_gia.py`.
+**Bước 2 – đột biến** (chỉ trên dữ liệu thật, từng thông số) – bản v1.3:
+
+1. Lấy tối đa 60 giá trị hợp lệ trước mẫu hiện tại trong 15 phút gần nhất (cần ít nhất 20), tính trung vị *m* và MAD. Ngưỡng = max(5 × 1,4826 × MAD, δ) với δ = 0,5 °C; 2 %RH; 20 lux. Lệch khỏi *m* quá ngưỡng là ứng viên.
+2. Mẫu còn phải **nhảy quá ngưỡng so với mẫu bình thường liền trước** (trong vòng 30 giây). Số đo trôi chậm, hoặc thay đổi trong lúc vừa mất kết nối, không bị gắn cờ.
+3. **3 mẫu liên tiếp cùng lệch một chiều, cùng một mức mới** là thay đổi thật (bật đèn, mở cửa): không gắn cờ, và gỡ cờ của các mẫu trước trong chuỗi.
+4. **Đột biến phải quay về:** nếu các mẫu sau vẫn ở xa mức ngay trước đột biến (quá nửa ngưỡng, cùng phía) thì gỡ cờ.
+
+Vì vậy cờ `spike` chỉ còn ở nhiễu tức thời 1–2 mẫu. Điều 2 và 4 được thêm sau khi chạy trên dữ liệu thật 25–26/11 (v1.2 gắn nhầm khi số đo trôi chậm); `SPIKE_JUMP_CHECK = False` quay về v1.2. Tham số trong `backend/app/config.py`; đánh giá và chọn lại bằng `tools/danh_gia.py` (kết quả: `docs/danh_gia_thuat_toan.md`).
 
 **Bước 3 – nghi kẹt** (theo cảm biến): DHT22 khi nhiệt độ **và** độ ẩm giữ nguyên giá trị liên tục từ 20 phút; BH1750 khi độ rọi giữ nguyên từ 20 phút (bỏ qua dưới 1 lux vì phòng tối là bình thường).
 
@@ -351,3 +358,4 @@ Tham số không bắt buộc `device_id`; mặc định thiết bị gửi gầ
 | v1 | 26/10/2026 | Bản đầu: measurements, latest, history, settings (đọc), health |
 | v1.1 | 21/11/2026 | TV1: chế độ demo (`POST/GET /api/demo`, `demo` trong phản hồi), `alert_state` + `demo` (không bắt buộc) trong gói đo |
 | v1.2 | 25/11/2026 | TV2: `source` (tách demo/giả lập), `PUT /api/settings`, `GET /api/alerts`, `GET /api/export.csv`, cờ `spike`/`stuck`, sự kiện cảnh báo trên máy chủ |
+| v1.3 | 27/11/2026 | TV2: sửa lỗi 500 khi gửi lại gói trùng đồng thời; bước 2 thêm điều kiện nhảy so với mẫu liền trước và "đột biến phải quay về", MAD_K = 5 (chọn trên dữ liệu thật) |

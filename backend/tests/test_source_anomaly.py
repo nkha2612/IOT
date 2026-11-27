@@ -171,3 +171,56 @@ def test_export_csv(client, clock):
     all_rows = list(csv.DictReader(io.StringIO(
         client.get("/api/export.csv", params={"source": "all"}).content.decode("utf-8-sig"))))
     assert [x["source"] for x in all_rows] == ["real", "real", "demo"]
+
+
+def test_slow_drift_is_not_a_spike(client, clock):
+    """Dữ liệu thật 26/11 06:05: nhiệt độ hạ dần 30,0 -> 29,9 (0,1 mỗi mẫu) lệch 0,6 so với
+    trung vị 5 phút trước và từng bị gắn nhầm "đột biến"."""
+    seq = baseline(client, clock)
+    t = 27.1
+    for i in range(30):  # tăng dần 0,1 °C mỗi mẫu tới 30 °C
+        t = round(t + 0.1, 1)
+        post(client, clock, seq + i, temperature=t)
+    flags = [i["flags"]["temperature"] for i in client.get("/api/history").json()["items"]]
+    assert "spike" not in flags
+    post(client, clock, seq + 100, temperature=36.0)  # nhảy thật vẫn bị bắt
+    assert latest(client)["flags"]["temperature"] == "spike"
+
+
+def test_step_at_threshold_edge_is_cleared_when_level_stays(client, clock):
+    """Dữ liệu thật 26/11 01:53: mẫu đầu của bước nhảy lệch sát ngưỡng bị gắn cờ, các mẫu sau
+    (cùng mức mới) không còn vượt ngưỡng nên trước đây cờ ở lại mãi."""
+    seq = baseline(client, clock)
+    for i, t in enumerate([28.0, 27.9, 27.9]):  # trung vị 27,9–28,0; MAD nhỏ -> ngưỡng δ = 0,5
+        post(client, clock, seq + i, temperature=t)
+    post(client, clock, seq + 10, temperature=28.6)  # lệch sát ngưỡng
+    for i in range(4):
+        post(client, clock, seq + 11 + i, temperature=28.5)  # ở lại mức mới
+    flags = [i["flags"]["temperature"] for i in client.get("/api/history").json()["items"]]
+    assert "spike" not in flags
+
+
+def test_no_spike_right_after_connection_gap(client, clock):
+    """Dữ liệu thật 26/11 07:09: sau 7,8 phút mất Wi-Fi, độ ẩm khác hẳn trước lúc mất – thay đổi
+    thật trong lúc không có số liệu, không phải đột biến."""
+    seq = baseline(client, clock)
+    clock.advance(7.8 * 60)
+    for i, h in enumerate([58.5, 56.8, 54.6, 53.8, 53.0]):
+        post(client, clock, seq + i, humidity=h)
+    flags = [i["flags"]["humidity"] for i in client.get("/api/history").json()["items"]]
+    assert "spike" not in flags
+
+
+def test_spike_during_slow_drift_is_kept(client, clock):
+    """Đột biến chen giữa lúc nhiệt độ đang trôi (trung vị đã lệch khỏi mức hiện tại) vẫn phải
+    giữ cờ khi các mẫu sau quay về đúng mức ngay trước nó."""
+    seq = baseline(client, clock)
+    t = 27.1
+    for i in range(20):
+        t = round(t - 0.05, 2)
+        post(client, clock, seq + i, temperature=t)
+    post(client, clock, seq + 30, temperature=21.0)
+    for i in range(4):
+        post(client, clock, seq + 31 + i, temperature=t)
+    flags = [i["flags"]["temperature"] for i in client.get("/api/history").json()["items"]]
+    assert flags.count("spike") == 1
