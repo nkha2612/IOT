@@ -200,6 +200,18 @@ static void testDemoFields() {
         "id qua dai -> bo qua lenh, khong tran bo dem");
 }
 
+static void testSourceField() {
+  std::printf("7. Truong source (API v1.2): sim / demo / do that\n");
+  MeasurementPayload p = okPayload();
+  CHECK(build(p).find("\"source\"") == std::string::npos, "do that: khong gui source");
+  p.source = "sim";
+  JsonDocument d;
+  CHECK(!deserializeJson(d, build(p)), "JSON hop le");
+  CHECK(std::strcmp(d["source"] | "", "sim") == 0, "source = sim");
+  p.source = "demo";
+  CHECK(!deserializeJson(d, build(p)) && std::strcmp(d["source"] | "", "demo") == 0, "source = demo");
+}
+
 // Ghi các gói mẫu để kiểm bằng schema Pydantic của backend.
 static int dump(const char* dir) {
   struct Named { const char* name; MeasurementPayload p; };
@@ -227,8 +239,13 @@ static int dump(const char* dir) {
   demo.demoScenario = "temp_high";
   demo.demoSample = 3;
   demo.demoTotal = 7;
+  demo.source = "demo";
+  MeasurementPayload sim = okPayload();
+  sim.seq = 156;
+  sim.lux = 120.0f;
+  sim.source = "sim";
   const Named all[] = {{"fw_ok", okPayload()}, {"fw_dht_error", err}, {"fw_no_bh1750", noLight},
-                       {"fw_edge", edge}, {"fw_demo", demo}};
+                       {"fw_edge", edge}, {"fw_demo", demo}, {"fw_sim", sim}};
   for (const Named& n : all) {
     const std::string js = build(n.p);
     const std::string path = std::string(dir) + "/" + n.name + ".json";
@@ -252,6 +269,7 @@ int main(int argc, char** argv) {
   testParseAck();
   testParseBad();
   testDemoFields();
+  testSourceField();
   std::printf("\n%d/%d kiem tra dat\n", checks - failures, checks);
   return failures ? 1 : 0;
 }

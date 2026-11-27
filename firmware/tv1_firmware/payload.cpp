@@ -68,6 +68,7 @@ size_t buildMeasurementJson(const MeasurementPayload& p, char* out, size_t n) {
     dm["sample"] = p.demoSample;
     dm["total"] = p.demoTotal;
   }
+  if (p.source) doc["source"] = p.source;
 
   const size_t need = measureJson(doc);
   if (need + 1 > n) return 0;

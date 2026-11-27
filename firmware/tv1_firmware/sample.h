@@ -19,4 +19,5 @@ struct Sample {
   DemoScenario demo;       // NONE = số đo thật
   uint8_t demoSample;      // mẫu demo thứ mấy (1..demoTotal)
   uint8_t demoTotal;
+  bool simulated;          // đang giả lập bằng lệnh Serial "sim lux …" -> gửi source = "sim"
 };

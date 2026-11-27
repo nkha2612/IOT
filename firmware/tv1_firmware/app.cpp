@@ -154,6 +154,7 @@ void takeSample(uint32_t now) {
   s.alertFlags = (uint8_t)((uint8_t)chTemp.state() | ((uint8_t)chHum.state() << 2) |
                            ((uint8_t)chLight.state() << 4));
   s.lightChecked = lightChecked;
+  s.simulated = simLux != SimLux::OFF;
   if (da.applied) {
     s.demo = demoScenario;
     s.demoSample = da.sample;

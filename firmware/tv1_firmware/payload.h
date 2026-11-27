@@ -28,6 +28,9 @@ struct MeasurementPayload {
   const char* demoScenario;
   uint8_t demoSample;     // mẫu thứ mấy (1..demoTotal)
   uint8_t demoTotal;
+  // source (API v1.2): "sim" khi đang giả lập bằng lệnh Serial, "demo" khi chạy demo,
+  // nullptr = đo thật (không gửi, backend hiểu là "real").
+  const char* source;
 };
 
 const char* alertStateApiName(AlertState s);  // "normal" | "active" | "unknown"

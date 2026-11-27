@@ -94,6 +94,8 @@ bool sendSample(const Sample& s) {
     p.demoSample = s.demoSample;
     p.demoTotal = s.demoTotal;
   }
+  // API v1.2: đánh dấu số đo không phải đo thật để backend tách khỏi dữ liệu đánh giá
+  p.source = s.demo != DemoScenario::NONE ? "demo" : s.simulated ? "sim" : nullptr;
   const size_t len = buildMeasurementJson(p, body, sizeof body);
   if (len == 0) {
     Serial.println("[SERVER] LOI: goi do vuot bo dem, khong gui");
